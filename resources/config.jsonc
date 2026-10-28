@@ -1,0 +1,48 @@
+{
+  // =============================================================================
+  // AegisTelemetry Configuration
+  //
+  // Passive telemetry collector for calibrating AegisAC thresholds.
+  // =============================================================================
+  "AegisTelemetry": {
+    // Enable or disable telemetry collection
+    "Enabled": true,
+
+    // Unique server identifier reported in telemetry sessions
+    "ServerId": "cs2-server-1",
+
+    // Secret salt used for HMAC-SHA256 pseudonymization of player SteamIDs
+    "PseudonymizationSalt": "change-this-secret-salt-in-production",
+
+    // MariaDB database connection settings
+    "Database": {
+      "Host": "127.0.0.1",
+      "Port": 3306,
+      "Database": "aegis_telemetry",
+      "User": "aegis_user",
+      "Password": "your_secure_password",
+      "ConnectionTimeoutSeconds": 5,
+      "MaximumPoolSize": 10
+    },
+
+    // Bounded memory buffer and batch flush settings
+    "Queue": {
+      // Maximum records held in RAM during DB outages before oldest records are dropped
+      "MaxQueueCapacity": 10000,
+
+      // Target batch size for multi-row INSERT transactions
+      "BatchSize": 100,
+
+      // Flush frequency in seconds
+      "FlushIntervalSeconds": 3.0,
+
+      // Periodic system health audit interval in seconds
+      "HealthAuditIntervalSeconds": 60.0
+    },
+
+    // Module telemetry toggles
+    "EnableAimbotTelemetry": true,
+    "EnableTriggerbotTelemetry": true,
+    "EnableAimlockTelemetry": true
+  }
+}

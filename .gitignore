@@ -1,0 +1,17 @@
+# Build and output directories
+bin/
+obj/
+build/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
