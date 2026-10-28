@@ -744,10 +744,13 @@ app.MapGet("/api/cheater/detail", async ([FromQuery] string hash) =>
             }
         }
 
+        bool isSteam = ulong.TryParse(hash, out ulong sId) && sId > 76561190000000000;
         return Results.Ok(new
         {
             success = true,
             hash,
+            isSteamId = isSteam,
+            steamId = isSteam ? hash : null,
             shots,
             reactions,
             episodes
@@ -1311,7 +1314,7 @@ public class CheaterProfile
     public string PlayerHash { get; set; } = "";
     public string ShortHash => PlayerHash.Length >= 10 ? PlayerHash[..10] : PlayerHash;
     public bool IsSteamId => ulong.TryParse(PlayerHash, out ulong id) && id > 76561190000000000;
-    public string SteamId => PlayerHash;
+    public string? SteamId => IsSteamId ? PlayerHash : null;
     public string DisplayIdentifier => IsSteamId ? PlayerHash : ShortHash;
     public string ThreatLevel { get; set; } = "SUSPECT"; // "CRITICAL / RAGE", "HIGH RISK", "SUSPECT"
     public List<string> DetectedModules { get; set; } = new();
