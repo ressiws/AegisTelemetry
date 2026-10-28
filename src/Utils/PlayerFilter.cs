@@ -20,6 +20,11 @@ namespace AegisTelemetry.Utils;
 public static class PlayerFilter
 {
     /// <summary>
+    /// When true, any two distinct players are treated as enemies (FFA / Deathmatch mode).
+    /// </summary>
+    public static bool TeammatesAreEnemies { get; set; } = false;
+
+    /// <summary>
     /// Checks if the player is a valid connected human client (excluding bots, GOTV, and null entities).
     /// </summary>
     public static bool IsEligibleHuman(IPlayer? player)
@@ -84,6 +89,9 @@ public static class PlayerFilter
 
         if (!IsEligibleCombatant(attacker) || !IsValidTarget(victim))
             return false;
+
+        if (TeammatesAreEnemies)
+            return true;
 
         var pA = attacker.PlayerPawn;
         var pB = victim.PlayerPawn;

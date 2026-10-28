@@ -43,6 +43,13 @@
     // Module telemetry toggles
     "EnableAimbotTelemetry": true,
     "EnableTriggerbotTelemetry": true,
-    "EnableAimlockTelemetry": true
+    "EnableAimlockTelemetry": true,
+
+    // Treat teammates as enemies (recommended true for FFA / Deathmatch servers)
+    "TeammatesAreEnemies": false,
+
+    // Use engine native trace for triggerbot crosshair raycasting.
+    // False (recommended): 100% managed geometric raycasting, eliminates native engine crashes and SIGSEGV during sprays.
+    "EnableNativeTrace": false
   }
 }

@@ -174,7 +174,7 @@ public sealed class AimbotTelemetry
             if (idx >= 0 && idx < histCount)
             {
                 var entry = pb.InputHistory.Get(idx);
-                if (entry.Accessor.HasField("view_angles"))
+                if (entry != null && entry.Accessor != null && entry.Accessor.HasField("view_angles"))
                 {
                     QAngle shotAngles = entry.ViewAngles;
                     if (AimMath.IsFinite(shotAngles))
@@ -273,14 +273,14 @@ public sealed class AimbotTelemetry
                 continue;
 
             var pawn = p.PlayerPawn;
-            var node = pawn?.CBodyComponent?.SceneNode;
-            if (pawn == null || !pawn.IsValid || node == null)
+            if (pawn == null || !pawn.IsValid)
                 continue;
 
-            Vector origin = node.AbsOrigin;
-            if (!AimMath.IsFinite(origin))
+            Vector? maybeOrigin = pawn.AbsOrigin;
+            if (!maybeOrigin.HasValue || !AimMath.IsFinite(maybeOrigin.Value))
                 continue;
 
+            Vector origin = maybeOrigin.Value;
             var eye = pawn.EyePosition ?? new Vector(origin.X, origin.Y, origin.Z + 64.0f);
 
             frame.Players[id] = new TelemetryTrackedPosition
