@@ -15,3 +15,8 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Sensitive local configurations
+appsettings.json
+appsettings.*.json
+!appsettings.example.json
