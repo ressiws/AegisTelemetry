@@ -105,7 +105,14 @@ public sealed class AegisTelemetryPlugin : BasePlugin
         Core.Event.OnClientDisconnected += OnClientDisconnected;
         Core.Event.OnMapLoad += OnMapLoad;
 
-        _ = _dbManager.StartSessionAsync(Core.Engine.GlobalVars.MapName);
+        if (hotReload)
+        {
+            string map = GetCurrentMapName();
+            if (!string.IsNullOrEmpty(map) && map != "unknown")
+            {
+                _ = _dbManager.StartSessionAsync(map);
+            }
+        }
 
         Core.Logger.LogInformation("[AegisTelemetry] Initialized. Commands: aegis_telemetry_status, aegis_telemetry_stats, aegis_telemetry_reload");
     }
@@ -134,7 +141,33 @@ public sealed class AegisTelemetryPlugin : BasePlugin
         }
     }
 
-    private int CurrentTick => Core.Engine.GlobalVars.TickCount;
+    private int CurrentTick
+    {
+        get
+        {
+            try
+            {
+                return Core.Engine.GlobalVars.TickCount;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+    }
+
+    private string GetCurrentMapName()
+    {
+        try
+        {
+            string? name = Core.Engine.GlobalVars.MapName;
+            return string.IsNullOrEmpty(name) ? "unknown" : name;
+        }
+        catch
+        {
+            return "unknown";
+        }
+    }
 
     private void OnProcessUsercmds(ref ProcessUsercmdsPreContext ctx)
     {
@@ -172,8 +205,13 @@ public sealed class AegisTelemetryPlugin : BasePlugin
         _aimlock.Reset();
 
         long oldSession = _dbManager.CurrentSessionId;
-        _ = _dbManager.EndSessionAsync(oldSession);
-        _ = _dbManager.StartSessionAsync(Core.Engine.GlobalVars.MapName);
+        if (oldSession > 0)
+        {
+            _ = _dbManager.EndSessionAsync(oldSession);
+        }
+
+        string map = GetCurrentMapName();
+        _ = _dbManager.StartSessionAsync(map);
     }
 
     [GameEventHandler(HookMode.Post)]

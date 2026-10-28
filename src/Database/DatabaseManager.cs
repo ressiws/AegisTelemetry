@@ -197,6 +197,12 @@ public sealed class DatabaseManager : IAsyncDisposable
         var healthAudits = new List<HealthAuditRecord>();
 
         long fallbackSessionId = CurrentSessionId;
+        if (fallbackSessionId <= 0 && batch.Count > 0)
+        {
+            long newSession = await StartSessionAsync("unknown");
+            if (newSession > 0)
+                fallbackSessionId = newSession;
+        }
 
         foreach (var r in batch)
         {
