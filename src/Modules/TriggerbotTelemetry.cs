@@ -62,6 +62,7 @@ internal sealed class TelemetryTriggerPlayerState
     public bool LastAnglesValid;
     public Vector LastOrigin;
     public bool LastOriginValid;
+    public bool WasAttacking;
 
     public readonly List<TelemetryTriggerCmd> Commands = new();
     public readonly List<TelemetryPendingReaction> Pending = new();
@@ -74,6 +75,7 @@ internal sealed class TelemetryTriggerPlayerState
         ActiveMode = TelemetryContactMode.TargetDriven;
         LastAnglesValid = false;
         LastOriginValid = false;
+        WasAttacking = false;
         Commands.Clear();
         Pending.Clear();
     }
@@ -87,7 +89,7 @@ internal sealed class TelemetrySmoke
 
 public sealed class TriggerbotTelemetry
 {
-    private const int MaxPlayers = 64;
+    private const int MaxPlayers = 65;
     private const float HeldAngleThreshold = 0.5f;
     private const float TraceLength = 8192.0f;
     private static readonly TimeSpan SmokeLifetime = TimeSpan.FromMilliseconds(22500);
@@ -99,7 +101,7 @@ public sealed class TriggerbotTelemetry
     private readonly Func<int, IPlayer?> _getPlayer;
     private readonly Action<string> _debug;
 
-    private readonly TelemetryTriggerPlayerState[] _players = new TelemetryTriggerPlayerState[MaxPlayers + 1];
+    private readonly TelemetryTriggerPlayerState[] _players = new TelemetryTriggerPlayerState[MaxPlayers];
     private readonly List<TelemetrySmoke> _smokes = new();
 
     public TriggerbotTelemetry(
@@ -181,7 +183,23 @@ public sealed class TriggerbotTelemetry
                 continue;
 
             QAngle angles = b.Viewangles;
-            bool isAttack = pb.Attack1StartHistoryIndex >= 0;
+            bool isAttack = false;
+            int idx = pb.Attack1StartHistoryIndex;
+            int histCount = pb.InputHistory.Count;
+
+            if (idx >= 0 && idx < histCount)
+            {
+                var entry = pb.InputHistory.Get(idx);
+                if (entry.Accessor.HasField("view_angles"))
+                {
+                    QAngle shotAngles = entry.ViewAngles;
+                    if (AimMath.IsFinite(shotAngles))
+                    {
+                        angles = shotAngles;
+                        isAttack = true;
+                    }
+                }
+            }
 
             if (!AimMath.IsFinite(angles))
                 continue;
@@ -208,7 +226,7 @@ public sealed class TriggerbotTelemetry
             return;
 
         var pawn = player.PlayerPawn;
-        if (pawn is null)
+        if (pawn is null || !pawn.IsValid)
             return;
 
         var st = _players[id];
@@ -217,7 +235,9 @@ public sealed class TriggerbotTelemetry
             return;
 
         QAngle viewAngles = cmd != null ? cmd.Angles : pawn.EyeAngles;
-        bool isFreshAttack = cmd != null && cmd.IsAttackPressed;
+        bool isAttackPressed = cmd != null && cmd.IsAttackPressed;
+        bool isFreshAttack = isAttackPressed && !st.WasAttacking;
+        st.WasAttacking = isAttackPressed;
 
         if (commandNumber <= st.LastCommandNumber)
             return;
@@ -371,25 +391,65 @@ public sealed class TriggerbotTelemetry
 
     private (int targetIndex, Vector hitPoint) TraceCrosshair(IPlayer player, in Vector eye, in QAngle angles)
     {
+        var pawn = player.PlayerPawn;
+        if (pawn is null || !pawn.IsValid)
+            return (-1, Vector.Zero);
+
         Vector forward = AimMath.Forward(angles);
         Vector end = new(eye.X + forward.X * TraceLength, eye.Y + forward.Y * TraceLength, eye.Z + forward.Z * TraceLength);
 
-        var pawn = player.PlayerPawn;
-        if (pawn is null)
-            return (-1, Vector.Zero);
-
-        var traceParams = new TraceParams
+        TraceResult trace;
+        try
         {
-            InteractWith = MaskTrace.Solid | MaskTrace.Hitbox | MaskTrace.Player |
-                           MaskTrace.CsgoTeam1 | MaskTrace.CsgoTeam2 |
-                           MaskTrace.CsgoMonster | MaskTrace.CsgoMoveable | MaskTrace.Window,
-            EntitiesToIgnore = [pawn]
-        };
+            var traceParams = new TraceParams
+            {
+                InteractWith = MaskTrace.Solid | MaskTrace.Hitbox | MaskTrace.Player |
+                               MaskTrace.CsgoTeam1 | MaskTrace.CsgoTeam2 |
+                               MaskTrace.CsgoMonster | MaskTrace.CsgoMoveable | MaskTrace.Window,
+                EntitiesToIgnore = [pawn]
+            };
 
-        var trace = _traceManager.TraceShapeLine(eye, end, traceParams);
+            trace = _traceManager.TraceShapeLine(eye, end, traceParams);
+        }
+        catch (Exception ex)
+        {
+            _debug($"[TriggerbotTelemetry] Trace exception: {ex.Message}");
+            return (-1, Vector.Zero);
+        }
+
+        // 1. Direct native trace hit check (fast path)
+        if (trace.DidHit && trace.Entity != null)
+        {
+            uint hitIndex = trace.Entity.Index;
+            nint hitAddress = trace.Entity.Address;
+
+            for (int i = 0; i < MaxPlayers; i++)
+            {
+                var target = _getPlayer(i);
+                if (target is not { IsValid: true } || target.PlayerID == player.PlayerID)
+                    continue;
+
+                if (!target.IsAlive || !PlayerFilter.AreEnemies(player, target))
+                    continue;
+
+                var targetPawn = target.PlayerPawn;
+                var targetCtrl = target.Controller;
+
+                bool directHit = false;
+                if (targetPawn != null && targetPawn.IsValid && (targetPawn.Index == hitIndex || targetPawn.Address == hitAddress))
+                    directHit = true;
+                else if (targetCtrl != null && targetCtrl.IsValid && (targetCtrl.Index == hitIndex || targetCtrl.Address == hitAddress))
+                    directHit = true;
+                else if (target.PlayerID == (int)hitIndex)
+                    directHit = true;
+
+                if (directHit)
+                    return (target.PlayerID, trace.EndPos);
+            }
+        }
+
+        // 2. Geometric cylinder intersection fallback
         float maxDistance = (trace.DidHit && trace.Distance > 0.0f) ? trace.Distance : TraceLength;
-
-        // Geometric cylinder intersection fallback
         int bestTarget = -1;
         float bestDist = float.MaxValue;
         Vector bestPoint = trace.DidHit ? trace.EndPos : end;
@@ -404,7 +464,7 @@ public sealed class TriggerbotTelemetry
                 continue;
 
             var targetPawn = target.PlayerPawn;
-            if (targetPawn is null)
+            if (targetPawn is null || !targetPawn.IsValid)
                 continue;
 
             Vector origin = targetPawn.AbsOrigin ?? default;

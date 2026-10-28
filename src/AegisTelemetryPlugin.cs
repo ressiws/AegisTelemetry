@@ -171,58 +171,112 @@ public sealed class AegisTelemetryPlugin : BasePlugin
 
     private void OnProcessUsercmds(ref ProcessUsercmdsPreContext ctx)
     {
-        _aimbot.OnProcessUsercmds(ctx.Params.Player, ctx.Params.Usercmds);
-        _triggerbot.OnProcessUsercmds(ctx.Params.Player, ctx.Params.Usercmds);
-        _aimlock.OnProcessUsercmds(ctx.Params.Player, ctx.Params.Usercmds);
+        try
+        {
+            var player = ctx.Params.Player;
+            var cmds = ctx.Params.Usercmds;
+            if (player == null || !player.IsValid || cmds == null)
+                return;
+
+            _aimbot.OnProcessUsercmds(player, cmds);
+            _triggerbot.OnProcessUsercmds(player, cmds);
+            _aimlock.OnProcessUsercmds(player, cmds);
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in ProcessUsercmds: {ex.Message}");
+        }
     }
 
     private void OnSetupMove(ref SetupMoveMovementPreContext ctx)
     {
-        int cmdNum = (int)ctx.Params.UserCmd.CommandNumber;
-        _aimbot.OnSetupMove(ctx.Params.Player, cmdNum, CurrentTick);
-        _triggerbot.OnSetupMove(ctx.Params.Player, cmdNum, CurrentTick);
-        _aimlock.OnSetupMove(ctx.Params.Player, cmdNum, CurrentTick);
+        try
+        {
+            var ucmd = ctx.Params.UserCmd;
+            var player = ctx.Params.Player;
+            if (ucmd == null || player == null || !player.IsValid)
+                return;
+
+            int cmdNum = (int)ucmd.CommandNumber;
+            int tick = CurrentTick;
+            _aimbot.OnSetupMove(player, cmdNum, tick);
+            _triggerbot.OnSetupMove(player, cmdNum, tick);
+            _aimlock.OnSetupMove(player, cmdNum, tick);
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in SetupMove: {ex.Message}");
+        }
     }
 
     private void OnTick()
     {
-        int tick = CurrentTick;
-        _aimbot.OnGameFrame(tick);
-        _aimlock.OnGameFrame(tick);
+        try
+        {
+            int tick = CurrentTick;
+            _aimbot.OnGameFrame(tick);
+            _aimlock.OnGameFrame(tick);
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnTick: {ex.Message}");
+        }
     }
 
     private void OnClientDisconnected(SwiftlyS2.Shared.Events.IOnClientDisconnectedEvent e)
     {
-        _aimbot.OnClientDisconnect(e.PlayerId);
-        _triggerbot.OnClientDisconnect(e.PlayerId);
-        _aimlock.OnClientDisconnect(e.PlayerId);
+        try
+        {
+            _aimbot.OnClientDisconnect(e.PlayerId);
+            _triggerbot.OnClientDisconnect(e.PlayerId);
+            _aimlock.OnClientDisconnect(e.PlayerId);
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in ClientDisconnected: {ex.Message}");
+        }
     }
 
     private void OnMapLoad(SwiftlyS2.Shared.Events.IOnMapLoadEvent e)
     {
-        _aimbot.Reset();
-        _triggerbot.Reset();
-        _aimlock.Reset();
-
-        long oldSession = _dbManager.CurrentSessionId;
-        if (oldSession > 0)
+        try
         {
-            _ = _dbManager.EndSessionAsync(oldSession);
-        }
+            _aimbot.Reset();
+            _triggerbot.Reset();
+            _aimlock.Reset();
 
-        string map = GetCurrentMapName();
-        _ = _dbManager.StartSessionAsync(map);
+            long oldSession = _dbManager.CurrentSessionId;
+            if (oldSession > 0)
+            {
+                _ = _dbManager.EndSessionAsync(oldSession);
+            }
+
+            string map = GetCurrentMapName();
+            _ = _dbManager.StartSessionAsync(map);
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnMapLoad: {ex.Message}");
+        }
     }
 
     [GameEventHandler(HookMode.Post)]
     public HookResult OnWeaponFire(EventWeaponFire e)
     {
-        var player = e.UserIdPlayer;
-        if (player != null && PlayerFilter.IsEligibleCombatant(player))
+        try
         {
-            string weapon = e.Weapon ?? "";
-            _aimbot.OnWeaponFire(player, weapon, CurrentTick);
-            _triggerbot.OnWeaponFire(player, weapon, CurrentTick);
+            var player = e.UserIdPlayer;
+            if (player != null && PlayerFilter.IsEligibleCombatant(player))
+            {
+                string weapon = e.Weapon ?? "";
+                int tick = CurrentTick;
+                _aimbot.OnWeaponFire(player, weapon, tick);
+                _triggerbot.OnWeaponFire(player, weapon, tick);
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnWeaponFire: {ex.Message}");
         }
         return HookResult.Continue;
     }
@@ -230,15 +284,23 @@ public sealed class AegisTelemetryPlugin : BasePlugin
     [GameEventHandler(HookMode.Post)]
     public HookResult OnPlayerHurt(EventPlayerHurt e)
     {
-        var attacker = e.AttackerPlayer;
-        var victim = e.UserIdPlayer;
-        if (attacker != null && victim != null && PlayerFilter.AreEnemies(attacker, victim))
+        try
         {
-            string weapon = e.Weapon ?? "";
-            int dmg = e.ActualDmgHealth;
-            short hg = (short)e.ActualHitGroup;
-            _aimbot.OnPlayerHurt(attacker, victim, weapon, dmg, hg, CurrentTick);
-            _triggerbot.OnPlayerHurt(attacker, victim, weapon, hg, CurrentTick);
+            var attacker = e.AttackerPlayer;
+            var victim = e.UserIdPlayer;
+            if (attacker != null && victim != null && PlayerFilter.AreEnemies(attacker, victim))
+            {
+                string weapon = e.Weapon ?? "";
+                int dmg = e.ActualDmgHealth;
+                short hg = (short)e.ActualHitGroup;
+                int tick = CurrentTick;
+                _aimbot.OnPlayerHurt(attacker, victim, weapon, dmg, hg, tick);
+                _triggerbot.OnPlayerHurt(attacker, victim, weapon, hg, tick);
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnPlayerHurt: {ex.Message}");
         }
         return HookResult.Continue;
     }
@@ -246,13 +308,20 @@ public sealed class AegisTelemetryPlugin : BasePlugin
     [GameEventHandler(HookMode.Post)]
     public HookResult OnPlayerDeath(EventPlayerDeath e)
     {
-        var victim = e.UserIdPlayer;
-        if (victim != null && victim.IsValid)
+        try
         {
-            int victimId = victim.PlayerID;
-            _aimbot.OnPlayerDeath(victimId);
-            _triggerbot.OnPlayerDeath(victimId);
-            _aimlock.OnPlayerDeath(victimId);
+            var victim = e.UserIdPlayer;
+            if (victim != null && victim.IsValid)
+            {
+                int victimId = victim.PlayerID;
+                _aimbot.OnPlayerDeath(victimId);
+                _triggerbot.OnPlayerDeath(victimId);
+                _aimlock.OnPlayerDeath(victimId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnPlayerDeath: {ex.Message}");
         }
         return HookResult.Continue;
     }
@@ -260,13 +329,20 @@ public sealed class AegisTelemetryPlugin : BasePlugin
     [GameEventHandler(HookMode.Post)]
     public HookResult OnPlayerSpawn(EventPlayerSpawn e)
     {
-        var player = e.UserIdPlayer;
-        if (player != null && player.IsValid)
+        try
         {
-            int id = player.PlayerID;
-            _aimbot.OnPlayerSpawn(id);
-            _triggerbot.OnPlayerSpawn(id);
-            _aimlock.OnPlayerSpawn(id);
+            var player = e.UserIdPlayer;
+            if (player != null && player.IsValid)
+            {
+                int id = player.PlayerID;
+                _aimbot.OnPlayerSpawn(id);
+                _triggerbot.OnPlayerSpawn(id);
+                _aimlock.OnPlayerSpawn(id);
+            }
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnPlayerSpawn: {ex.Message}");
         }
         return HookResult.Continue;
     }
@@ -274,7 +350,14 @@ public sealed class AegisTelemetryPlugin : BasePlugin
     [GameEventHandler(HookMode.Post)]
     public HookResult OnSmokeDetonate(EventSmokegrenadeDetonate e)
     {
-        _triggerbot.OnSmokeDetonate(new Vector(e.X, e.Y, e.Z));
+        try
+        {
+            _triggerbot.OnSmokeDetonate(new Vector(e.X, e.Y, e.Z));
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogDebug($"[AegisTelemetry] Error in OnSmokeDetonate: {ex.Message}");
+        }
         return HookResult.Continue;
     }
 
