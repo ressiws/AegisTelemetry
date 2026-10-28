@@ -495,6 +495,270 @@ app.MapGet("/api/aimlock", async () =>
     }
 });
 
+// -----------------------------------------------------------------------------
+// Cheater Intelligence & Comparative Analytics Endpoints
+// -----------------------------------------------------------------------------
+
+app.MapGet("/api/cheaters", async () =>
+{
+    try
+    {
+        await using var conn = new MySqlConnection(BuildConnectionString(dbConfig));
+        await conn.OpenAsync();
+
+        var (cheaterDict, suspectHashes, _) = await AnalyzeCheatersAsync(conn);
+
+        // Comparative Analytics: Clean Legits vs Identified Cheaters
+        var legitSnaps = new List<float>();
+        var legitEffs = new List<float>();
+        var cheaterSnaps = new List<float>();
+        var cheaterEffs = new List<float>();
+        int legitShots = 0, legitHits = 0, legitHs = 0;
+        int cheaterShots = 0, cheaterHits = 0, cheaterHs = 0;
+
+        const string allAimSql = "SELECT player_hash, snap_angle, path_efficiency, hit_confirmed, actual_hitgroup FROM `telemetry_aimbot_shots`;";
+        await using (var cmd = new MySqlCommand(allAimSql, conn))
+        await using (var r = await cmd.ExecuteReaderAsync())
+        {
+            while (await r.ReadAsync())
+            {
+                string hash = r.GetString(0);
+                float snap = r.GetFloat(1);
+                float eff = r.GetFloat(2);
+                bool hit = r.GetBoolean(3);
+                short hg = r.GetInt16(4);
+
+                bool isCheater = suspectHashes.Contains(hash);
+                if (isCheater)
+                {
+                    cheaterShots++;
+                    if (hit) cheaterHits++;
+                    if (hit && hg == 1) cheaterHs++;
+                    cheaterSnaps.Add(snap);
+                    cheaterEffs.Add(eff);
+                }
+                else
+                {
+                    legitShots++;
+                    if (hit) legitHits++;
+                    if (hit && hg == 1) legitHs++;
+                    legitSnaps.Add(snap);
+                    legitEffs.Add(eff);
+                }
+            }
+        }
+
+        // Triggerbot comparison
+        var legitReacts = new List<float>();
+        var cheaterReacts = new List<float>();
+
+        const string allTrigSql = "SELECT player_hash, reaction_ms FROM `telemetry_triggerbot_reactions` WHERE contact_mode = 'TargetDriven' AND prior_clicks = 0;";
+        await using (var cmd = new MySqlCommand(allTrigSql, conn))
+        await using (var r = await cmd.ExecuteReaderAsync())
+        {
+            while (await r.ReadAsync())
+            {
+                string hash = r.GetString(0);
+                float ms = r.GetFloat(1);
+                if (suspectHashes.Contains(hash)) cheaterReacts.Add(ms);
+                else legitReacts.Add(ms);
+            }
+        }
+
+        // Aimlock comparison
+        var legitLocks = new List<float>();
+        var cheaterLocks = new List<float>();
+
+        const string allLockSql = "SELECT player_hash, duration_seconds FROM `telemetry_aimlock_episodes`;";
+        await using (var cmd = new MySqlCommand(allLockSql, conn))
+        await using (var r = await cmd.ExecuteReaderAsync())
+        {
+            while (await r.ReadAsync())
+            {
+                string hash = r.GetString(0);
+                float dur = r.GetFloat(1);
+                if (suspectHashes.Contains(hash)) cheaterLocks.Add(dur);
+                else legitLocks.Add(dur);
+            }
+        }
+
+        var legitSnapStats = CalculatePercentiles(legitSnaps);
+        var cheaterSnapStats = CalculatePercentiles(cheaterSnaps);
+        var legitEffStats = CalculatePercentiles(legitEffs);
+        var cheaterEffStats = CalculatePercentiles(cheaterEffs);
+        var legitReactStats = CalculatePercentiles(legitReacts);
+        var cheaterReactStats = CalculatePercentiles(cheaterReacts);
+        var legitLockStats = CalculatePercentiles(legitLocks);
+        var cheaterLockStats = CalculatePercentiles(cheaterLocks);
+
+        var comparison = new
+        {
+            legit = new
+            {
+                shots = legitShots,
+                hitRate = legitShots > 0 ? (float)legitHits / legitShots * 100f : 0f,
+                headshotRate = legitHits > 0 ? (float)legitHs / legitHits * 100f : 0f,
+                avgSnap = legitSnapStats?.Mean ?? 0f,
+                p50Snap = legitSnapStats?.P50 ?? 0f,
+                p95Snap = legitSnapStats?.P95 ?? 0f,
+                p99Snap = legitSnapStats?.P99 ?? 0f,
+                maxSnap = legitSnapStats?.Max ?? 0f,
+                avgEfficiency = (legitEffStats?.Mean ?? 0f) * 100f,
+                avgReactionMs = legitReactStats?.Mean ?? 0f,
+                minReactionMs = legitReactStats?.Min ?? 0f,
+                avgLockDuration = legitLockStats?.Mean ?? 0f,
+                maxLockDuration = legitLockStats?.Max ?? 0f
+            },
+            cheaters = new
+            {
+                shots = cheaterShots,
+                hitRate = cheaterShots > 0 ? (float)cheaterHits / cheaterShots * 100f : 0f,
+                headshotRate = cheaterHits > 0 ? (float)cheaterHs / cheaterHits * 100f : 0f,
+                avgSnap = cheaterSnapStats?.Mean ?? 0f,
+                p50Snap = cheaterSnapStats?.P50 ?? 0f,
+                p95Snap = cheaterSnapStats?.P95 ?? 0f,
+                p99Snap = cheaterSnapStats?.P99 ?? 0f,
+                maxSnap = cheaterSnapStats?.Max ?? 0f,
+                avgEfficiency = (cheaterEffStats?.Mean ?? 0f) * 100f,
+                avgReactionMs = cheaterReactStats?.Mean ?? 0f,
+                minReactionMs = cheaterReactStats?.Min ?? 0f,
+                avgLockDuration = cheaterLockStats?.Mean ?? 0f,
+                maxLockDuration = cheaterLockStats?.Max ?? 0f
+            }
+        };
+
+        var cheaterList = cheaterDict.Values
+            .OrderByDescending(c => c.ThreatLevel.StartsWith("CRITICAL"))
+            .ThenByDescending(c => c.ThreatLevel.StartsWith("HIGH"))
+            .ThenByDescending(c => c.MaxSnapAngle)
+            .ToList();
+
+        return Results.Ok(new
+        {
+            success = true,
+            totalCheaters = cheaterList.Count,
+            cheaters = cheaterList,
+            comparison
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { success = false, message = ex.Message });
+    }
+});
+
+app.MapGet("/api/cheater/detail", async ([FromQuery] string hash) =>
+{
+    if (string.IsNullOrWhiteSpace(hash))
+        return Results.BadRequest(new { success = false, message = "Hash is required" });
+
+    try
+    {
+        await using var conn = new MySqlConnection(BuildConnectionString(dbConfig));
+        await conn.OpenAsync();
+
+        // 1. Recent Shots
+        const string shotsSql = @"
+            SELECT snap_angle, angular_velocity, path_efficiency, monotonic_steps, hit_confirmed, actual_hitgroup, damage_dealt, weapon, target_distance, timestamp_utc
+            FROM `telemetry_aimbot_shots`
+            WHERE player_hash = @hash
+            ORDER BY timestamp_utc DESC
+            LIMIT 40;";
+
+        var shots = new List<object>();
+        await using (var cmd = new MySqlCommand(shotsSql, conn))
+        {
+            cmd.Parameters.AddWithValue("@hash", hash);
+            await using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                shots.Add(new
+                {
+                    snapAngle = r.GetFloat("snap_angle"),
+                    angularVelocity = r.GetFloat("angular_velocity"),
+                    pathEfficiency = r.GetFloat("path_efficiency") * 100f,
+                    monotonicSteps = r.GetInt16("monotonic_steps"),
+                    hitConfirmed = r.GetBoolean("hit_confirmed"),
+                    hitgroup = r.GetInt16("actual_hitgroup"),
+                    damage = r.GetInt16("damage_dealt"),
+                    weapon = r.GetString("weapon"),
+                    distance = r.GetFloat("target_distance"),
+                    time = r.GetDateTime("timestamp_utc")
+                });
+            }
+        }
+
+        // 2. Recent Reactions
+        const string trigSql = @"
+            SELECT reaction_ms, attacker_speed, contact_mode, prior_clicks, hit_confirmed, smoke_occluded, weapon, timestamp_utc
+            FROM `telemetry_triggerbot_reactions`
+            WHERE player_hash = @hash
+            ORDER BY timestamp_utc DESC
+            LIMIT 25;";
+
+        var reactions = new List<object>();
+        await using (var cmd = new MySqlCommand(trigSql, conn))
+        {
+            cmd.Parameters.AddWithValue("@hash", hash);
+            await using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                reactions.Add(new
+                {
+                    reactionMs = r.GetFloat("reaction_ms"),
+                    speed = r.GetFloat("attacker_speed"),
+                    mode = r.GetString("contact_mode"),
+                    priorClicks = r.GetInt16("prior_clicks"),
+                    hitConfirmed = r.GetBoolean("hit_confirmed"),
+                    smoke = r.GetBoolean("smoke_occluded"),
+                    weapon = r.GetString("weapon"),
+                    time = r.GetDateTime("timestamp_utc")
+                });
+            }
+        }
+
+        // 3. Recent Aimlock Episodes
+        const string lockSql = @"
+            SELECT duration_seconds, target_displacement, on_target_ratio, avg_distance, completed_normally, timestamp_utc
+            FROM `telemetry_aimlock_episodes`
+            WHERE player_hash = @hash
+            ORDER BY timestamp_utc DESC
+            LIMIT 20;";
+
+        var episodes = new List<object>();
+        await using (var cmd = new MySqlCommand(lockSql, conn))
+        {
+            cmd.Parameters.AddWithValue("@hash", hash);
+            await using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                episodes.Add(new
+                {
+                    duration = r.GetFloat("duration_seconds"),
+                    displacement = r.GetFloat("target_displacement"),
+                    ratio = r.GetFloat("on_target_ratio") * 100f,
+                    distance = r.GetFloat("avg_distance"),
+                    completed = r.GetBoolean("completed_normally"),
+                    time = r.GetDateTime("timestamp_utc")
+                });
+            }
+        }
+
+        return Results.Ok(new
+        {
+            success = true,
+            hash,
+            shots,
+            reactions,
+            episodes
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { success = false, message = ex.Message });
+    }
+});
+
 app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = true) =>
 {
     try
@@ -503,58 +767,14 @@ app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = 
         await conn.OpenAsync();
 
         // 0. Detect Outlier Cheaters (identify players with superhuman / rage distributions)
-        var suspectHashes = new HashSet<string>();
+        var suspectHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var suspectDetails = new List<string>();
 
         if (excludeOutliers)
         {
-            // Suspect Aimbot: players with >= 15 shots where > 15% of shots have snap_angle > 26.0°
-            const string suspectAimSql = @"
-                SELECT player_hash, COUNT(*) as total_shots,
-                       SUM(CASE WHEN snap_angle > 26.0 THEN 1 ELSE 0 END) as high_snaps,
-                       MAX(snap_angle) as max_snap
-                FROM `telemetry_aimbot_shots`
-                GROUP BY player_hash
-                HAVING total_shots >= 15 AND (high_snaps / total_shots) > 0.15;";
-
-            await using (var cmd = new MySqlCommand(suspectAimSql, conn))
-            await using (var r = await cmd.ExecuteReaderAsync())
-            {
-                while (await r.ReadAsync())
-                {
-                    string hash = r.GetString(0);
-                    int total = r.GetInt32(1);
-                    int high = r.GetInt32(2);
-                    float maxSnap = r.GetFloat(3);
-                    float ratio = (float)high / total * 100f;
-                    suspectHashes.Add(hash);
-                    string shortHash = hash.Length >= 8 ? hash[..8] : hash;
-                    suspectDetails.Add($"Player `{shortHash}...`: {high}/{total} ({ratio:F1}%) shots with snap > 26° (max: {maxSnap:F1}°) - [Suspect Aimbot]");
-                }
-            }
-
-            // Suspect Triggerbot: players with >= 10 target-driven reactions where avg reaction < 75ms
-            const string suspectTrigSql = @"
-                SELECT player_hash, COUNT(*) as total_reacts, AVG(reaction_ms) as avg_react, MIN(reaction_ms) as min_react
-                FROM `telemetry_triggerbot_reactions`
-                WHERE contact_mode = 'TargetDriven' AND prior_clicks = 0
-                GROUP BY player_hash
-                HAVING total_reacts >= 10 AND avg_react < 75.0;";
-
-            await using (var cmd = new MySqlCommand(suspectTrigSql, conn))
-            await using (var r = await cmd.ExecuteReaderAsync())
-            {
-                while (await r.ReadAsync())
-                {
-                    string hash = r.GetString(0);
-                    int total = r.GetInt32(1);
-                    float avgR = r.GetFloat(2);
-                    float minR = r.GetFloat(3);
-                    suspectHashes.Add(hash);
-                    string shortHash = hash.Length >= 8 ? hash[..8] : hash;
-                    suspectDetails.Add($"Player `{shortHash}...`: Avg reaction {avgR:F1}ms (min: {minR:F1}ms across {total} samples) - [Suspect Triggerbot]");
-                }
-            }
+            var (_, suspects, details) = await AnalyzeCheatersAsync(conn);
+            suspectHashes = suspects;
+            suspectDetails = details;
         }
 
         // 1. Aimbot Shots
@@ -775,6 +995,283 @@ Console.WriteLine($"========================================================");
 
 app.Run(url);
 
+static async Task<(Dictionary<string, CheaterProfile> cheaters, HashSet<string> suspectHashes, List<string> suspectDetails)> AnalyzeCheatersAsync(MySqlConnection conn)
+{
+    var cheaters = new Dictionary<string, CheaterProfile>(StringComparer.OrdinalIgnoreCase);
+    var suspectHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var suspectDetails = new List<string>();
+
+    CheaterProfile GetOrAdd(string hash)
+    {
+        if (!cheaters.TryGetValue(hash, out var cp))
+        {
+            cp = new CheaterProfile { PlayerHash = hash };
+            cheaters[hash] = cp;
+        }
+        return cp;
+    }
+
+    // 1. Aimbot Analysis per player
+    const string aimSql = @"
+        SELECT 
+            player_hash,
+            COUNT(*) as total_shots,
+            SUM(CASE WHEN hit_confirmed = 1 THEN 1 ELSE 0 END) as hit_shots,
+            SUM(CASE WHEN hit_confirmed = 1 AND actual_hitgroup = 1 THEN 1 ELSE 0 END) as headshots,
+            AVG(snap_angle) as avg_snap,
+            MAX(snap_angle) as max_snap,
+            SUM(CASE WHEN snap_angle > 20.0 THEN 1 ELSE 0 END) as snaps_gt_20,
+            SUM(CASE WHEN snap_angle > 26.0 THEN 1 ELSE 0 END) as snaps_gt_26,
+            AVG(path_efficiency) as avg_efficiency,
+            AVG(angular_velocity) as avg_velocity,
+            AVG(monotonic_steps) as avg_steps
+        FROM `telemetry_aimbot_shots`
+        GROUP BY player_hash;";
+
+    await using (var cmd = new MySqlCommand(aimSql, conn))
+    await using (var r = await cmd.ExecuteReaderAsync())
+    {
+        while (await r.ReadAsync())
+        {
+            string hash = r.GetString("player_hash");
+            int total = r.GetInt32("total_shots");
+            int hits = r.IsDBNull(r.GetOrdinal("hit_shots")) ? 0 : Convert.ToInt32(r.GetValue(r.GetOrdinal("hit_shots")));
+            int hs = r.IsDBNull(r.GetOrdinal("headshots")) ? 0 : Convert.ToInt32(r.GetValue(r.GetOrdinal("headshots")));
+            float avgSnap = r.IsDBNull(r.GetOrdinal("avg_snap")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_snap")));
+            float maxSnap = r.IsDBNull(r.GetOrdinal("max_snap")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("max_snap")));
+            int gt20 = r.IsDBNull(r.GetOrdinal("snaps_gt_20")) ? 0 : Convert.ToInt32(r.GetValue(r.GetOrdinal("snaps_gt_20")));
+            int gt26 = r.IsDBNull(r.GetOrdinal("snaps_gt_26")) ? 0 : Convert.ToInt32(r.GetValue(r.GetOrdinal("snaps_gt_26")));
+            float avgEff = r.IsDBNull(r.GetOrdinal("avg_efficiency")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_efficiency")));
+            float avgVel = r.IsDBNull(r.GetOrdinal("avg_velocity")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_velocity")));
+            float avgSteps = r.IsDBNull(r.GetOrdinal("avg_steps")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_steps")));
+
+            float gt20Ratio = total > 0 ? (float)gt20 / total : 0f;
+            float gt26Ratio = total > 0 ? (float)gt26 / total : 0f;
+            float hsRatio = hits > 0 ? (float)hs / hits : 0f;
+
+            bool isAimbotSuspect = false;
+            var reasons = new List<string>();
+
+            if (total >= 8 && gt26Ratio > 0.12f)
+            {
+                isAimbotSuspect = true;
+                reasons.Add($"Extreme snaps: {gt26}/{total} ({gt26Ratio * 100:F1}%) snaps > 26.0° (max {maxSnap:F1}°)");
+            }
+            else if (total >= 5 && maxSnap > 35.0f)
+            {
+                isAimbotSuspect = true;
+                reasons.Add($"Inhuman maximum snap of {maxSnap:F1}° (human max < 25°)");
+            }
+            else if (total >= 10 && gt20Ratio > 0.25f)
+            {
+                isAimbotSuspect = true;
+                reasons.Add($"Abnormal flick frequency: {gt20Ratio * 100:F1}% of shots > 20°");
+            }
+
+            if (total >= 10 && avgEff > 0.95f && avgSteps >= 3.5f && maxSnap > 14.0f)
+            {
+                isAimbotSuspect = true;
+                reasons.Add($"Robotic linear convergence: Path efficiency {avgEff * 100:F1}%, {avgSteps:F1} monotonic steps");
+            }
+
+            if (hits >= 8 && hsRatio > 0.85f && avgSnap > 6.0f)
+            {
+                isAimbotSuspect = true;
+                reasons.Add($"Superhuman headshot focus: {hsRatio * 100:F1}% headshots across {hits} hits");
+            }
+
+            if (isAimbotSuspect)
+            {
+                var cp = GetOrAdd(hash);
+                cp.DetectedModules.Add("Aimbot");
+                cp.Reasons.AddRange(reasons);
+                cp.TotalShots = total;
+                cp.HitShots = hits;
+                cp.Headshots = hs;
+                cp.AvgSnapAngle = avgSnap;
+                cp.MaxSnapAngle = maxSnap;
+                cp.SnapsGt20Ratio = gt20Ratio;
+                cp.SnapsGt26Ratio = gt26Ratio;
+                cp.AvgPathEfficiency = avgEff;
+                cp.AvgAngularVelocity = avgVel;
+            }
+        }
+    }
+
+    // Top weapons for suspected aimbots
+    if (cheaters.Count > 0)
+    {
+        const string weaponSql = @"
+            SELECT player_hash, weapon, COUNT(*) as cnt
+            FROM `telemetry_aimbot_shots`
+            GROUP BY player_hash, weapon
+            ORDER BY player_hash, cnt DESC;";
+
+        await using (var cmd = new MySqlCommand(weaponSql, conn))
+        await using (var r = await cmd.ExecuteReaderAsync())
+        {
+            while (await r.ReadAsync())
+            {
+                string hash = r.GetString(0);
+                if (cheaters.TryGetValue(hash, out var cp) && cp.TopWeapon == "None")
+                {
+                    cp.TopWeapon = r.GetString(1);
+                }
+            }
+        }
+    }
+
+    // 2. Triggerbot Analysis per player
+    const string trigSql = @"
+        SELECT 
+            player_hash,
+            COUNT(*) as total_reacts,
+            MIN(reaction_ms) as min_react,
+            AVG(reaction_ms) as avg_react,
+            SUM(CASE WHEN reaction_ms < 90.0 THEN 1 ELSE 0 END) as fast_reacts,
+            SUM(CASE WHEN contact_mode = 'TargetDriven' AND prior_clicks = 0 THEN 1 ELSE 0 END) as target_driven_clean
+        FROM `telemetry_triggerbot_reactions`
+        GROUP BY player_hash;";
+
+    await using (var cmd = new MySqlCommand(trigSql, conn))
+    await using (var r = await cmd.ExecuteReaderAsync())
+    {
+        while (await r.ReadAsync())
+        {
+            string hash = r.GetString("player_hash");
+            int total = r.GetInt32("total_reacts");
+            float minReact = r.IsDBNull(r.GetOrdinal("min_react")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("min_react")));
+            float avgReact = r.IsDBNull(r.GetOrdinal("avg_react")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_react")));
+            int fast = r.IsDBNull(r.GetOrdinal("fast_reacts")) ? 0 : Convert.ToInt32(r.GetValue(r.GetOrdinal("fast_reacts")));
+            int clean = r.IsDBNull(r.GetOrdinal("target_driven_clean")) ? 0 : Convert.ToInt32(r.GetValue(r.GetOrdinal("target_driven_clean")));
+
+            bool isTriggerSuspect = false;
+            var reasons = new List<string>();
+
+            if (clean >= 3 && avgReact < 85.0f)
+            {
+                isTriggerSuspect = true;
+                reasons.Add($"Inhuman triggerbot reaction: Avg {avgReact:F1}ms (human limit ~120-150ms)");
+            }
+            else if (clean >= 2 && minReact < 45.0f)
+            {
+                isTriggerSuspect = true;
+                reasons.Add($"Sub-frame trigger response: Min {minReact:F1}ms on target-driven crosshair");
+            }
+
+            if (isTriggerSuspect)
+            {
+                var cp = GetOrAdd(hash);
+                if (!cp.DetectedModules.Contains("Triggerbot")) cp.DetectedModules.Add("Triggerbot");
+                cp.Reasons.AddRange(reasons);
+                cp.TotalReactions = total;
+                cp.MinReactionMs = minReact;
+                cp.AvgReactionMs = avgReact;
+                cp.FastReactionsCount = fast;
+            }
+        }
+    }
+
+    // 3. Aimlock Analysis per player
+    const string lockSql = @"
+        SELECT 
+            player_hash,
+            COUNT(*) as total_episodes,
+            MAX(duration_seconds) as max_duration,
+            AVG(duration_seconds) as avg_duration,
+            AVG(target_displacement) as avg_displacement,
+            AVG(on_target_ratio) as avg_ratio
+        FROM `telemetry_aimlock_episodes`
+        GROUP BY player_hash;";
+
+    await using (var cmd = new MySqlCommand(lockSql, conn))
+    await using (var r = await cmd.ExecuteReaderAsync())
+    {
+        while (await r.ReadAsync())
+        {
+            string hash = r.GetString("player_hash");
+            int total = r.GetInt32("total_episodes");
+            float maxDur = r.IsDBNull(r.GetOrdinal("max_duration")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("max_duration")));
+            float avgDur = r.IsDBNull(r.GetOrdinal("avg_duration")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_duration")));
+            float avgDisp = r.IsDBNull(r.GetOrdinal("avg_displacement")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_displacement")));
+            float avgRatio = r.IsDBNull(r.GetOrdinal("avg_ratio")) ? 0f : Convert.ToSingle(r.GetValue(r.GetOrdinal("avg_ratio")));
+
+            bool isLockSuspect = false;
+            var reasons = new List<string>();
+
+            if (total >= 2 && maxDur > 1.85f && avgRatio > 0.85f)
+            {
+                isLockSuspect = true;
+                reasons.Add($"Persistent aimlock: Lock duration {maxDur:F2}s with {avgRatio * 100:F1}% on-target ratio");
+            }
+            else if (maxDur > 2.3f)
+            {
+                isLockSuspect = true;
+                reasons.Add($"Unnatural sticky tracking: Max lock {maxDur:F2}s (exceeds human spray tracking limit)");
+            }
+
+            if (isLockSuspect)
+            {
+                var cp = GetOrAdd(hash);
+                if (!cp.DetectedModules.Contains("Aimlock")) cp.DetectedModules.Add("Aimlock");
+                cp.Reasons.AddRange(reasons);
+                cp.AimlockEpisodes = total;
+                cp.MaxLockDuration = maxDur;
+                cp.AvgLockDuration = avgDur;
+                cp.AvgTargetDisplacement = avgDisp;
+                cp.AvgOnTargetRatio = avgRatio;
+            }
+        }
+    }
+
+    // If a cheater was detected by triggerbot or aimlock alone, fetch their aim stats too if available
+    foreach (var cp in cheaters.Values)
+    {
+        if (cp.TotalShots == 0)
+        {
+            const string fillAimSql = @"
+                SELECT 
+                    COUNT(*) as total_shots,
+                    SUM(CASE WHEN hit_confirmed = 1 THEN 1 ELSE 0 END) as hit_shots,
+                    SUM(CASE WHEN hit_confirmed = 1 AND actual_hitgroup = 1 THEN 1 ELSE 0 END) as headshots,
+                    AVG(snap_angle) as avg_snap,
+                    MAX(snap_angle) as max_snap,
+                    AVG(path_efficiency) as avg_efficiency,
+                    AVG(angular_velocity) as avg_velocity
+                FROM `telemetry_aimbot_shots`
+                WHERE player_hash = @hash;";
+
+            await using var cmd = new MySqlCommand(fillAimSql, conn);
+            cmd.Parameters.AddWithValue("@hash", cp.PlayerHash);
+            await using var r = await cmd.ExecuteReaderAsync();
+            if (await r.ReadAsync())
+            {
+                cp.TotalShots = r.IsDBNull(0) ? 0 : r.GetInt32(0);
+                cp.HitShots = r.IsDBNull(1) ? 0 : Convert.ToInt32(r.GetValue(1));
+                cp.Headshots = r.IsDBNull(2) ? 0 : Convert.ToInt32(r.GetValue(2));
+                cp.AvgSnapAngle = r.IsDBNull(3) ? 0f : Convert.ToSingle(r.GetValue(3));
+                cp.MaxSnapAngle = r.IsDBNull(4) ? 0f : Convert.ToSingle(r.GetValue(4));
+                cp.AvgPathEfficiency = r.IsDBNull(5) ? 0f : Convert.ToSingle(r.GetValue(5));
+                cp.AvgAngularVelocity = r.IsDBNull(6) ? 0f : Convert.ToSingle(r.GetValue(6));
+            }
+        }
+
+        // Determine Threat Level
+        if (cp.DetectedModules.Count >= 2 || cp.MaxSnapAngle > 35.0f || (cp.AvgReactionMs > 0 && cp.AvgReactionMs < 50.0f))
+            cp.ThreatLevel = "CRITICAL / RAGE";
+        else if (cp.DetectedModules.Count == 1 && (cp.MaxSnapAngle > 26.0f || (cp.AvgReactionMs > 0 && cp.AvgReactionMs < 75.0f) || cp.MaxLockDuration > 2.0f))
+            cp.ThreatLevel = "HIGH RISK";
+        else
+            cp.ThreatLevel = "SUSPECT";
+
+        suspectHashes.Add(cp.PlayerHash);
+        string shortH = cp.ShortHash;
+        suspectDetails.Add($"Player `{shortH}...`: [{string.Join(", ", cp.DetectedModules)}] {string.Join(" | ", cp.Reasons)} - [{cp.ThreatLevel}]");
+    }
+
+    return (cheaters, suspectHashes, suspectDetails);
+}
+
 public record DbConfig
 {
     public string Host { get; set; } = "localhost";
@@ -799,3 +1296,40 @@ public record StatsResult(
     float P95,
     float P99
 );
+
+public class CheaterProfile
+{
+    public string PlayerHash { get; set; } = "";
+    public string ShortHash => PlayerHash.Length >= 10 ? PlayerHash[..10] : PlayerHash;
+    public string ThreatLevel { get; set; } = "SUSPECT"; // "CRITICAL / RAGE", "HIGH RISK", "SUSPECT"
+    public List<string> DetectedModules { get; set; } = new();
+    public List<string> Reasons { get; set; } = new();
+
+    // Aim State
+    public int TotalShots { get; set; }
+    public int HitShots { get; set; }
+    public float HitRate => TotalShots > 0 ? (float)HitShots / TotalShots * 100f : 0f;
+    public int Headshots { get; set; }
+    public float HeadshotRate => HitShots > 0 ? (float)Headshots / HitShots * 100f : 0f;
+    public float AvgSnapAngle { get; set; }
+    public float MaxSnapAngle { get; set; }
+    public float SnapsGt20Ratio { get; set; }
+    public float SnapsGt26Ratio { get; set; }
+    public float AvgPathEfficiency { get; set; }
+    public float AvgAngularVelocity { get; set; }
+
+    // Triggerbot State
+    public int TotalReactions { get; set; }
+    public float MinReactionMs { get; set; }
+    public float AvgReactionMs { get; set; }
+    public int FastReactionsCount { get; set; }
+
+    // Aimlock State
+    public int AimlockEpisodes { get; set; }
+    public float MaxLockDuration { get; set; }
+    public float AvgLockDuration { get; set; }
+    public float AvgTargetDisplacement { get; set; }
+    public float AvgOnTargetRatio { get; set; }
+
+    public string TopWeapon { get; set; } = "None";
+}

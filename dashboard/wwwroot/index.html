@@ -126,6 +126,10 @@
       <button onclick="switchTab('aimlock')" id="tab-btn-aimlock" class="pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2">
         <i class="fa-solid fa-lock"></i> Aimlock Analysis
       </button>
+      <button onclick="switchTab('cheaters')" id="tab-btn-cheaters" class="pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2">
+        <i class="fa-solid fa-user-ninja text-rose-500"></i> Cheater Intelligence
+        <span id="cheaters-badge" class="badge bg-rose-950 text-rose-400 border border-rose-800 ml-1">0</span>
+      </button>
     </div>
 
     <!-- TAB 1: OVERVIEW & CALIBRATION -->
@@ -338,6 +342,150 @@
       </div>
     </div>
 
+    <!-- TAB 5: CHEATER INTELLIGENCE & COMPARISON -->
+    <div id="tab-cheaters" class="hidden space-y-6">
+      <div class="card p-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-base font-bold text-white flex items-center gap-2">
+              <i class="fa-solid fa-skull-crossbones text-rose-500"></i>
+              Cheater Intelligence & Aim Behavior Analysis
+            </h2>
+            <p class="text-xs text-gray-400">Identificação individual de jogadores com anomalias inumanas de mira e análise comparativa global: Jogadores Legítimos vs Cheaters.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="cheaters-status-summary" class="badge bg-rose-950 text-rose-400 border border-rose-800 px-3 py-1 text-xs">0 Suspeitos Detetados</span>
+            <button onclick="loadCheaters()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+              <i class="fa-solid fa-arrows-rotate"></i> Atualizar Cheaters
+            </button>
+          </div>
+        </div>
+
+        <!-- Global Comparison Cards (Legit vs Cheater) -->
+        <div class="mb-6">
+          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <i class="fa-solid fa-scale-balanced text-indigo-400"></i> Comparação Global: Legítimos vs Cheaters
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Card 1: Snaps & Trajeto -->
+            <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+              <div class="text-xs text-gray-400 font-semibold mb-2 flex justify-between">
+                <span>MIRA / SNAPS (ÂNGULO)</span>
+                <i class="fa-solid fa-crosshairs text-indigo-400"></i>
+              </div>
+              <div class="space-y-1.5 text-xs">
+                <div class="flex justify-between items-center bg-gray-800/40 px-2 py-1 rounded">
+                  <span class="text-emerald-400 font-medium">Legit Média:</span>
+                  <span id="comp-legit-snap" class="text-white font-bold">--°</span>
+                </div>
+                <div class="flex justify-between items-center bg-rose-950/30 border border-rose-900/40 px-2 py-1 rounded">
+                  <span class="text-rose-400 font-medium">Cheater Média:</span>
+                  <span id="comp-cheat-snap" class="text-rose-300 font-bold">--°</span>
+                </div>
+                <div class="flex justify-between text-[11px] text-gray-400 pt-1">
+                  <span>P95 Snap: <b id="comp-p95-snap" class="text-gray-200">--°</b></span>
+                  <span>Max: <b id="comp-max-snap" class="text-rose-400">--°</b></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2: Precisão & Headshots -->
+            <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+              <div class="text-xs text-gray-400 font-semibold mb-2 flex justify-between">
+                <span>PRECISÃO & HEADSHOTS</span>
+                <i class="fa-solid fa-bullseye text-emerald-400"></i>
+              </div>
+              <div class="space-y-1.5 text-xs">
+                <div class="flex justify-between items-center bg-gray-800/40 px-2 py-1 rounded">
+                  <span class="text-emerald-400 font-medium">Legit Acerto:</span>
+                  <span id="comp-legit-hit" class="text-white font-bold">--%</span>
+                </div>
+                <div class="flex justify-between items-center bg-rose-950/30 border border-rose-900/40 px-2 py-1 rounded">
+                  <span class="text-rose-400 font-medium">Cheater Acerto:</span>
+                  <span id="comp-cheat-hit" class="text-rose-300 font-bold">--%</span>
+                </div>
+                <div class="flex justify-between text-[11px] text-gray-400 pt-1">
+                  <span>Legit HS: <b id="comp-legit-hs" class="text-gray-200">--%</b></span>
+                  <span>Cheater HS: <b id="comp-cheat-hs" class="text-rose-400">--%</b></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: Triggerbot Reação -->
+            <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+              <div class="text-xs text-gray-400 font-semibold mb-2 flex justify-between">
+                <span>TEMPO DE REAÇÃO (TRIGGER)</span>
+                <i class="fa-solid fa-bolt text-amber-400"></i>
+              </div>
+              <div class="space-y-1.5 text-xs">
+                <div class="flex justify-between items-center bg-gray-800/40 px-2 py-1 rounded">
+                  <span class="text-emerald-400 font-medium">Legit Média:</span>
+                  <span id="comp-legit-react" class="text-white font-bold">-- ms</span>
+                </div>
+                <div class="flex justify-between items-center bg-rose-950/30 border border-rose-900/40 px-2 py-1 rounded">
+                  <span class="text-rose-400 font-medium">Cheater Média:</span>
+                  <span id="comp-cheat-react" class="text-rose-300 font-bold">-- ms</span>
+                </div>
+                <div class="flex justify-between text-[11px] text-gray-400 pt-1">
+                  <span>Legit Mín: <b id="comp-legit-minreact" class="text-gray-200">-- ms</b></span>
+                  <span>Cheater Mín: <b id="comp-cheat-minreact" class="text-rose-400">-- ms</b></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 4: Aimlock Duração -->
+            <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+              <div class="text-xs text-gray-400 font-semibold mb-2 flex justify-between">
+                <span>DURAÇÃO DE AIMLOCK</span>
+                <i class="fa-solid fa-lock text-purple-400"></i>
+              </div>
+              <div class="space-y-1.5 text-xs">
+                <div class="flex justify-between items-center bg-gray-800/40 px-2 py-1 rounded">
+                  <span class="text-emerald-400 font-medium">Legit Média:</span>
+                  <span id="comp-legit-lock" class="text-white font-bold">-- s</span>
+                </div>
+                <div class="flex justify-between items-center bg-rose-950/30 border border-rose-900/40 px-2 py-1 rounded">
+                  <span class="text-rose-400 font-medium">Cheater Média:</span>
+                  <span id="comp-cheat-lock" class="text-rose-300 font-bold">-- s</span>
+                </div>
+                <div class="flex justify-between text-[11px] text-gray-400 pt-1">
+                  <span>Legit Max: <b id="comp-legit-maxlock" class="text-gray-200">-- s</b></span>
+                  <span>Cheater Max: <b id="comp-cheat-maxlock" class="text-rose-400">-- s</b></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cheater Accounts Table -->
+        <div>
+          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <i class="fa-solid fa-list-check text-rose-400"></i> Contas Identificadas & Estado da Mira Individual
+          </h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs text-left text-gray-300">
+              <thead class="text-gray-400 bg-[#0d1117] uppercase border-b border-[#30363d]">
+                <tr>
+                  <th class="py-2.5 px-3">Conta / Hash</th>
+                  <th class="py-2.5 px-3">Risco</th>
+                  <th class="py-2.5 px-3">Deteções</th>
+                  <th class="py-2.5 px-3">Estado da Mira (Snaps)</th>
+                  <th class="py-2.5 px-3">Trajeto & HS</th>
+                  <th class="py-2.5 px-3">Reação Humana</th>
+                  <th class="py-2.5 px-3">Aimlock</th>
+                  <th class="py-2.5 px-3">Arma</th>
+                  <th class="py-2.5 px-3 text-right">Ação</th>
+                </tr>
+              </thead>
+              <tbody id="cheaters-tbody" class="divide-y divide-[#30363d]">
+                <tr><td colspan="9" class="py-6 text-center text-gray-500">A verificar contas e assinaturas de batota...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Database Config Modal -->
@@ -390,6 +538,111 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Cheater Detailed Inspection Modal -->
+  <div id="cheater-detail-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-[#161b22] border border-[#30363d] rounded-xl max-w-4xl w-full p-6 shadow-2xl max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between border-b border-[#30363d] pb-3 mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-rose-600/20 text-rose-400 flex items-center justify-center font-bold">
+            <i class="fa-solid fa-crosshairs"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <span id="modal-cheater-hash" class="font-mono">00000000...</span>
+              <button onclick="copyModalHash()" class="text-gray-400 hover:text-white text-xs" title="Copiar Hash"><i class="fa-regular fa-copy"></i></button>
+              <span id="modal-cheater-risk" class="badge bg-rose-950 text-rose-400 border border-rose-800 text-[10px]">RISK</span>
+            </h3>
+            <p class="text-xs text-gray-400" id="modal-cheater-reasons">Análise detalhada de telemetria</p>
+          </div>
+        </div>
+        <button onclick="closeCheaterDetailModal()" class="text-gray-400 hover:text-white">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto space-y-4 pr-1">
+        <!-- Recent Shots Table -->
+        <div>
+          <h4 class="text-xs font-bold text-gray-300 uppercase mb-2 flex items-center gap-1.5">
+            <i class="fa-solid fa-crosshairs text-indigo-400"></i> Amostras Recentes de Disparos / Snaps (Aimbot Telemetry)
+          </h4>
+          <div class="overflow-x-auto max-h-48 border border-[#30363d] rounded-lg bg-[#0d1117]">
+            <table class="w-full text-[11px] text-left text-gray-300">
+              <thead class="text-gray-400 bg-gray-900 sticky top-0 border-b border-[#30363d]">
+                <tr>
+                  <th class="py-1.5 px-2.5">Data/Hora</th>
+                  <th class="py-1.5 px-2">Arma</th>
+                  <th class="py-1.5 px-2">Snap Angle (°)</th>
+                  <th class="py-1.5 px-2">Vel. Angular</th>
+                  <th class="py-1.5 px-2">Eficiência</th>
+                  <th class="py-1.5 px-2">Acerto</th>
+                  <th class="py-1.5 px-2">Distância</th>
+                </tr>
+              </thead>
+              <tbody id="modal-shots-tbody" class="divide-y divide-gray-800">
+                <tr><td colspan="7" class="py-3 text-center text-gray-500">Sem disparos registados</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Recent Triggerbot Reactions -->
+        <div>
+          <h4 class="text-xs font-bold text-gray-300 uppercase mb-2 flex items-center gap-1.5">
+            <i class="fa-solid fa-bolt text-amber-400"></i> Reações de Disparo (Triggerbot Telemetry)
+          </h4>
+          <div class="overflow-x-auto max-h-40 border border-[#30363d] rounded-lg bg-[#0d1117]">
+            <table class="w-full text-[11px] text-left text-gray-300">
+              <thead class="text-gray-400 bg-gray-900 sticky top-0 border-b border-[#30363d]">
+                <tr>
+                  <th class="py-1.5 px-2.5">Data/Hora</th>
+                  <th class="py-1.5 px-2">Reação (ms)</th>
+                  <th class="py-1.5 px-2">Modo</th>
+                  <th class="py-1.5 px-2">Vel. Atacante</th>
+                  <th class="py-1.5 px-2">Arma</th>
+                  <th class="py-1.5 px-2">Fumo</th>
+                  <th class="py-1.5 px-2">Acerto</th>
+                </tr>
+              </thead>
+              <tbody id="modal-trig-tbody" class="divide-y divide-gray-800">
+                <tr><td colspan="7" class="py-3 text-center text-gray-500">Sem reações registadas</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Recent Aimlock Episodes -->
+        <div>
+          <h4 class="text-xs font-bold text-gray-300 uppercase mb-2 flex items-center gap-1.5">
+            <i class="fa-solid fa-lock text-purple-400"></i> Episódios de Tracking Fixo (Aimlock Telemetry)
+          </h4>
+          <div class="overflow-x-auto max-h-40 border border-[#30363d] rounded-lg bg-[#0d1117]">
+            <table class="w-full text-[11px] text-left text-gray-300">
+              <thead class="text-gray-400 bg-gray-900 sticky top-0 border-b border-[#30363d]">
+                <tr>
+                  <th class="py-1.5 px-2.5">Data/Hora</th>
+                  <th class="py-1.5 px-2">Duração</th>
+                  <th class="py-1.5 px-2">Deslocamento Alvo</th>
+                  <th class="py-1.5 px-2">Ratio no Alvo</th>
+                  <th class="py-1.5 px-2">Distância</th>
+                </tr>
+              </thead>
+              <tbody id="modal-lock-tbody" class="divide-y divide-gray-800">
+                <tr><td colspan="5" class="py-3 text-center text-gray-500">Sem episódios registados</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-3 border-t border-[#30363d] mt-2">
+        <button onclick="closeCheaterDetailModal()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs px-4 py-2 rounded-lg font-medium">
+          Fechar
+        </button>
+      </div>
     </div>
   </div>
 
@@ -673,16 +926,243 @@
       } catch (e) { console.error(e); }
     }
 
+    let selectedCheaterHash = "";
+
+    async function loadCheaters() {
+      try {
+        const res = await fetch('/api/cheaters');
+        const data = await res.json();
+        if (!data.success) return;
+
+        const badge = document.getElementById('cheaters-badge');
+        badge.textContent = data.totalCheaters;
+        if (data.totalCheaters > 0) {
+          badge.className = "badge bg-rose-600 text-white font-bold ml-1 animate-pulse";
+        } else {
+          badge.className = "badge bg-gray-800 text-gray-400 border border-gray-700 ml-1";
+        }
+
+        document.getElementById('cheaters-status-summary').textContent = `${data.totalCheaters} Contas Suspeitas em Quarentena`;
+
+        // Render Comparative Cards
+        if (data.comparison) {
+          const l = data.comparison.legit;
+          const c = data.comparison.cheaters;
+
+          // Card 1: Snaps
+          document.getElementById('comp-legit-snap').textContent = `${l.avgSnap.toFixed(1)}°`;
+          document.getElementById('comp-cheat-snap').textContent = c.shots > 0 ? `${c.avgSnap.toFixed(1)}°` : '--°';
+          document.getElementById('comp-p95-snap').textContent = `${l.p95Snap.toFixed(1)}°`;
+          document.getElementById('comp-max-snap').textContent = c.shots > 0 ? `${c.maxSnap.toFixed(1)}°` : `${l.maxSnap.toFixed(1)}° (legit)`;
+
+          // Card 2: Hits & HS
+          document.getElementById('comp-legit-hit').textContent = `${l.hitRate.toFixed(1)}%`;
+          document.getElementById('comp-cheat-hit').textContent = c.shots > 0 ? `${c.hitRate.toFixed(1)}%` : '--%';
+          document.getElementById('comp-legit-hs').textContent = `${l.headshotRate.toFixed(1)}%`;
+          document.getElementById('comp-cheat-hs').textContent = c.shots > 0 ? `${c.headshotRate.toFixed(1)}%` : '--%';
+
+          // Card 3: Reaction
+          document.getElementById('comp-legit-react').textContent = `${l.avgReactionMs.toFixed(1)} ms`;
+          document.getElementById('comp-cheat-react').textContent = c.avgReactionMs > 0 ? `${c.avgReactionMs.toFixed(1)} ms` : '-- ms';
+          document.getElementById('comp-legit-minreact').textContent = `${l.minReactionMs.toFixed(1)} ms`;
+          document.getElementById('comp-cheat-minreact').textContent = c.minReactionMs > 0 ? `${c.minReactionMs.toFixed(1)} ms` : '-- ms';
+
+          // Card 4: Lock
+          document.getElementById('comp-legit-lock').textContent = `${l.avgLockDuration.toFixed(2)} s`;
+          document.getElementById('comp-cheat-lock').textContent = c.avgLockDuration > 0 ? `${c.avgLockDuration.toFixed(2)} s` : '-- s';
+          document.getElementById('comp-legit-maxlock').textContent = `${l.maxLockDuration.toFixed(2)} s`;
+          document.getElementById('comp-cheat-maxlock').textContent = c.maxLockDuration > 0 ? `${c.maxLockDuration.toFixed(2)} s` : '-- s';
+        }
+
+        // Render Cheater Table
+        const tbody = document.getElementById('cheaters-tbody');
+        tbody.innerHTML = '';
+
+        if (!data.cheaters || data.cheaters.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="9" class="py-8 text-center text-gray-400">
+                <i class="fa-solid fa-shield-heart text-emerald-400 text-2xl mb-2 block"></i>
+                <div class="font-semibold text-gray-200">Nenhum Cheater Detetado</div>
+                <div class="text-xs text-gray-500 mt-1">Todas as contas analisadas apresentam comportamento de mira consistente com jogadores humanos legítimos.</div>
+              </td>
+            </tr>`;
+          return;
+        }
+
+        data.cheaters.forEach(c => {
+          const tr = document.createElement('tr');
+          tr.className = "hover:bg-gray-800/40 transition";
+
+          // Threat Pill Color
+          let threatBadge = "bg-rose-950 text-rose-300 border-rose-800";
+          if (c.threatLevel.includes("CRITICAL")) threatBadge = "bg-red-600 text-white font-extrabold animate-pulse shadow-md shadow-red-500/30";
+          else if (c.threatLevel.includes("HIGH")) threatBadge = "bg-rose-900 text-rose-200 border-rose-700 font-bold";
+
+          // Module Badges
+          const modBadges = c.detectedModules.map(m => {
+            let color = "bg-indigo-950 text-indigo-300 border-indigo-800";
+            if (m === "Aimbot") color = "bg-emerald-950 text-emerald-300 border-emerald-800";
+            else if (m === "Triggerbot") color = "bg-amber-950 text-amber-300 border-amber-800";
+            else if (m === "Aimlock") color = "bg-purple-950 text-purple-300 border-purple-800";
+            return `<span class="badge ${color} border text-[10px] mr-1">${m}</span>`;
+          }).join('');
+
+          tr.innerHTML = `
+            <td class="py-3 px-3 font-mono font-medium text-white flex items-center gap-1.5">
+              <span>${c.shortHash}...</span>
+              <button onclick="navigator.clipboard.writeText('${c.playerHash}'); showToast('Hash copiado!')" class="text-gray-500 hover:text-gray-300 text-xs" title="Copiar Hash Completo">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </td>
+            <td class="py-3 px-3">
+              <span class="badge ${threatBadge} border text-[10px] uppercase">${c.threatLevel}</span>
+            </td>
+            <td class="py-3 px-3">
+              ${modBadges}
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-bold text-rose-300">Max: ${c.maxSnapAngle.toFixed(1)}° | Méd: ${c.avgSnapAngle.toFixed(1)}°</div>
+              <div class="text-[10px] text-gray-400">${(c.snapsGt20Ratio * 100).toFixed(0)}% tiros > 20° | Eff: ${(c.avgPathEfficiency * 100).toFixed(1)}%</div>
+            </td>
+            <td class="py-3 px-3">
+              <div class="font-semibold text-gray-200">${c.hitRate.toFixed(1)}% acerto</div>
+              <div class="text-[10px] text-amber-400 font-medium">${c.headshotRate.toFixed(1)}% Headshots</div>
+            </td>
+            <td class="py-3 px-3">
+              ${c.totalReactions > 0 ? `
+                <div class="font-bold ${c.avgReactionMs < 85 ? 'text-amber-400' : 'text-gray-300'}">Mín: ${c.minReactionMs.toFixed(1)}ms</div>
+                <div class="text-[10px] text-gray-400">Méd: ${c.avgReactionMs.toFixed(1)}ms (${c.fastReactionsCount} rápidos)</div>
+              ` : '<span class="text-gray-600">--</span>'}
+            </td>
+            <td class="py-3 px-3">
+              ${c.aimlockEpisodes > 0 ? `
+                <div class="font-bold ${c.maxLockDuration > 1.8 ? 'text-purple-400' : 'text-gray-300'}">Max: ${c.maxLockDuration.toFixed(2)}s</div>
+                <div class="text-[10px] text-gray-400">${(c.avgOnTargetRatio * 100).toFixed(0)}% fixado</div>
+              ` : '<span class="text-gray-600">--</span>'}
+            </td>
+            <td class="py-3 px-3 font-semibold text-gray-300">
+              ${c.topWeapon}
+            </td>
+            <td class="py-3 px-3 text-right">
+              <button onclick="openCheaterDetails('${c.playerHash}')" class="bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 px-2.5 py-1 rounded text-xs font-medium transition flex items-center gap-1.5 ml-auto">
+                <i class="fa-solid fa-magnifying-glass"></i> Inspecionar
+              </button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function openCheaterDetails(hash) {
+      selectedCheaterHash = hash;
+      document.getElementById('modal-cheater-hash').textContent = `${hash.substring(0, 16)}...`;
+      document.getElementById('modal-cheater-reasons').textContent = "A carregar histórico detalhado de telemetria...";
+      document.getElementById('cheater-detail-modal').classList.remove('hidden');
+
+      try {
+        const res = await fetch(`/api/cheater/detail?hash=${encodeURIComponent(hash)}`);
+        const data = await res.json();
+        if (!data.success) return;
+
+        // Render Shots
+        const shotsBody = document.getElementById('modal-shots-tbody');
+        shotsBody.innerHTML = '';
+        if (!data.shots || data.shots.length === 0) {
+          shotsBody.innerHTML = '<tr><td colspan="7" class="py-3 text-center text-gray-500">Sem disparos registados para esta conta</td></tr>';
+        } else {
+          data.shots.forEach(s => {
+            const tr = document.createElement('tr');
+            const isSnapExtreme = s.snapAngle > 20.0;
+            const hgMap = { 0: 'Corpo', 1: 'Cabeça', 2: 'Peito', 3: 'Estômago', 4: 'Braço E', 5: 'Braço D', 6: 'Perna E', 7: 'Perna D' };
+            const hgLabel = s.hitConfirmed ? (hgMap[s.hitgroup] || 'Acerto') : 'Falhado';
+            const hgColor = s.hitConfirmed ? (s.hitgroup === 1 ? 'text-amber-400 font-bold' : 'text-emerald-400') : 'text-gray-500';
+
+            tr.innerHTML = `
+              <td class="py-1.5 px-2.5 text-gray-400">${new Date(s.time).toLocaleTimeString()}</td>
+              <td class="py-1.5 px-2 font-semibold text-white">${s.weapon}</td>
+              <td class="py-1.5 px-2 font-bold ${isSnapExtreme ? 'text-red-400 bg-red-950/40' : 'text-gray-300'}">${s.snapAngle.toFixed(1)}°</td>
+              <td class="py-1.5 px-2 text-gray-400">${s.angularVelocity.toFixed(0)}°/s</td>
+              <td class="py-1.5 px-2 ${s.pathEfficiency > 95 ? 'text-indigo-400 font-semibold' : 'text-gray-400'}">${s.pathEfficiency.toFixed(1)}%</td>
+              <td class="py-1.5 px-2 ${hgColor}">${hgLabel} ${s.damage > 0 ? `(-${s.damage}hp)` : ''}</td>
+              <td class="py-1.5 px-2 text-gray-400">${s.distance.toFixed(0)}u</td>
+            `;
+            shotsBody.appendChild(tr);
+          });
+        }
+
+        // Render Triggerbot Reactions
+        const trigBody = document.getElementById('modal-trig-tbody');
+        trigBody.innerHTML = '';
+        if (!data.reactions || data.reactions.length === 0) {
+          trigBody.innerHTML = '<tr><td colspan="7" class="py-3 text-center text-gray-500">Sem reações registadas</td></tr>';
+        } else {
+          data.reactions.forEach(r => {
+            const tr = document.createElement('tr');
+            const isSubhuman = r.reactionMs < 85.0;
+            tr.innerHTML = `
+              <td class="py-1.5 px-2.5 text-gray-400">${new Date(r.time).toLocaleTimeString()}</td>
+              <td class="py-1.5 px-2 font-bold ${isSubhuman ? 'text-red-400 bg-red-950/40' : 'text-amber-400'}">${r.reactionMs.toFixed(1)} ms</td>
+              <td class="py-1.5 px-2 text-gray-300">${r.mode}</td>
+              <td class="py-1.5 px-2 text-gray-400">${r.speed.toFixed(0)} u/s</td>
+              <td class="py-1.5 px-2 text-gray-300">${r.weapon}</td>
+              <td class="py-1.5 px-2 ${r.smoke ? 'text-indigo-400 font-bold' : 'text-gray-500'}">${r.smoke ? 'Sim' : 'Não'}</td>
+              <td class="py-1.5 px-2 ${r.hitConfirmed ? 'text-emerald-400' : 'text-gray-500'}">${r.hitConfirmed ? 'Sim' : 'Não'}</td>
+            `;
+            trigBody.appendChild(tr);
+          });
+        }
+
+        // Render Aimlock Episodes
+        const lockBody = document.getElementById('modal-lock-tbody');
+        lockBody.innerHTML = '';
+        if (!data.episodes || data.episodes.length === 0) {
+          lockBody.innerHTML = '<tr><td colspan="5" class="py-3 text-center text-gray-500">Sem episódios registados</td></tr>';
+        } else {
+          data.episodes.forEach(e => {
+            const tr = document.createElement('tr');
+            const isAbnormal = e.duration > 1.8;
+            tr.innerHTML = `
+              <td class="py-1.5 px-2.5 text-gray-400">${new Date(e.time).toLocaleTimeString()}</td>
+              <td class="py-1.5 px-2 font-bold ${isAbnormal ? 'text-purple-400 bg-purple-950/40' : 'text-gray-300'}">${e.duration.toFixed(2)} s</td>
+              <td class="py-1.5 px-2 text-gray-300">${e.displacement.toFixed(1)}°</td>
+              <td class="py-1.5 px-2 font-semibold text-indigo-400">${e.ratio.toFixed(1)}%</td>
+              <td class="py-1.5 px-2 text-gray-400">${e.distance.toFixed(0)} u</td>
+            `;
+            lockBody.appendChild(tr);
+          });
+        }
+
+      } catch (e) { console.error(e); }
+    }
+
+    function closeCheaterDetailModal() {
+      document.getElementById('cheater-detail-modal').classList.add('hidden');
+    }
+
+    function copyModalHash() {
+      if (!selectedCheaterHash) return;
+      navigator.clipboard.writeText(selectedCheaterHash);
+      showToast("Hash completo copiado!");
+    }
+
     function switchTab(tabId) {
-      ['overview', 'aimbot', 'triggerbot', 'aimlock'].forEach(t => {
-        document.getElementById(`tab-${t}`).classList.add('hidden');
+      ['overview', 'aimbot', 'triggerbot', 'aimlock', 'cheaters'].forEach(t => {
+        const el = document.getElementById(`tab-${t}`);
+        if (el) el.classList.add('hidden');
         const btn = document.getElementById(`tab-btn-${t}`);
-        btn.className = "pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2";
+        if (btn) btn.className = "pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2";
       });
 
-      document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+      const activeTab = document.getElementById(`tab-${tabId}`);
+      if (activeTab) activeTab.classList.remove('hidden');
       const activeBtn = document.getElementById(`tab-btn-${tabId}`);
-      activeBtn.className = "pb-3 text-sm font-semibold text-indigo-400 border-b-2 border-indigo-500 flex items-center gap-2";
+      if (activeBtn) activeBtn.className = "pb-3 text-sm font-semibold text-indigo-400 border-b-2 border-indigo-500 flex items-center gap-2";
+
+      if (tabId === 'cheaters') {
+        loadCheaters();
+      }
     }
 
     function copyGeneratedMarkdown() {
@@ -710,6 +1190,7 @@
       await checkStatus();
       await loadSummary();
       await loadCalibration();
+      await loadCheaters();
       await loadAimbot();
       await loadTriggerbot();
       await loadAimlock();
