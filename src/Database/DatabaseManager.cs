@@ -37,6 +37,102 @@ public sealed class DatabaseManager : IAsyncDisposable
     private long _currentSessionId = -1;
     private DateTime _lastHealthAudit = DateTime.UtcNow;
 
+    private volatile bool _tablesInitialized = false;
+    private readonly SemaphoreSlim _initLock = new(1, 1);
+
+    private static readonly string[] SchemaStatements = new[]
+    {
+        @"CREATE TABLE IF NOT EXISTS `telemetry_sessions` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `server_id` VARCHAR(64) NOT NULL,
+            `map_name` VARCHAR(64) NOT NULL,
+            `start_time_utc` DATETIME(3) NOT NULL,
+            `end_time_utc` DATETIME(3) NULL,
+            `tick_rate` SMALLINT NOT NULL DEFAULT 64,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_server_map` (`server_id`, `map_name`),
+            INDEX `idx_start_time` (`start_time_utc`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
+
+        @"CREATE TABLE IF NOT EXISTS `telemetry_aimbot_shots` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `session_id` BIGINT NOT NULL,
+            `timestamp_utc` DATETIME(3) NOT NULL,
+            `server_tick` INT NOT NULL,
+            `command_number` INT NOT NULL,
+            `player_hash` VARCHAR(64) NOT NULL,
+            `weapon` VARCHAR(32) NOT NULL,
+            `target_distance` FLOAT NOT NULL,
+            `snap_angle` FLOAT NOT NULL,
+            `angular_velocity` FLOAT NOT NULL,
+            `error_reduction` FLOAT NOT NULL,
+            `path_efficiency` FLOAT NOT NULL,
+            `monotonic_steps` SMALLINT NOT NULL,
+            `hit_confirmed` BOOLEAN NOT NULL,
+            `actual_hitgroup` SMALLINT NOT NULL DEFAULT 0,
+            `damage_dealt` SMALLINT NOT NULL DEFAULT 0,
+            INDEX `idx_aimbot_session` (`session_id`),
+            INDEX `idx_aimbot_weapon` (`weapon`),
+            INDEX `idx_aimbot_hit_snap` (`hit_confirmed`, `snap_angle`),
+            CONSTRAINT `fk_aimbot_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
+
+        @"CREATE TABLE IF NOT EXISTS `telemetry_triggerbot_reactions` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `session_id` BIGINT NOT NULL,
+            `timestamp_utc` DATETIME(3) NOT NULL,
+            `server_tick` INT NOT NULL,
+            `command_number` INT NOT NULL,
+            `player_hash` VARCHAR(64) NOT NULL,
+            `weapon` VARCHAR(32) NOT NULL,
+            `reaction_ticks` INT NOT NULL,
+            `reaction_ms` FLOAT NOT NULL,
+            `attacker_speed` FLOAT NOT NULL,
+            `contact_mode` ENUM('TargetDriven', 'AimDriven') NOT NULL,
+            `prior_clicks` SMALLINT NOT NULL DEFAULT 0,
+            `target_distance` FLOAT NOT NULL,
+            `hit_confirmed` BOOLEAN NOT NULL,
+            `actual_hitgroup` SMALLINT NOT NULL DEFAULT 0,
+            `smoke_occluded` BOOLEAN NOT NULL DEFAULT FALSE,
+            INDEX `idx_trigger_session` (`session_id`),
+            INDEX `idx_trigger_reaction` (`reaction_ms`),
+            INDEX `idx_trigger_weapon_speed` (`weapon`, `attacker_speed`),
+            CONSTRAINT `fk_trigger_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
+
+        @"CREATE TABLE IF NOT EXISTS `telemetry_aimlock_episodes` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `session_id` BIGINT NOT NULL,
+            `timestamp_utc` DATETIME(3) NOT NULL,
+            `start_tick` INT NOT NULL,
+            `end_tick` INT NOT NULL,
+            `player_hash` VARCHAR(64) NOT NULL,
+            `duration_ticks` INT NOT NULL,
+            `duration_seconds` FLOAT NOT NULL,
+            `target_displacement` FLOAT NOT NULL,
+            `on_target_ratio` FLOAT NOT NULL,
+            `avg_distance` FLOAT NOT NULL,
+            `completed_normally` BOOLEAN NOT NULL,
+            INDEX `idx_aimlock_session` (`session_id`),
+            INDEX `idx_aimlock_duration` (`duration_seconds`),
+            INDEX `idx_aimlock_displacement` (`target_displacement`),
+            CONSTRAINT `fk_aimlock_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
+
+        @"CREATE TABLE IF NOT EXISTS `telemetry_health_audit` (
+            `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+            `session_id` BIGINT NOT NULL,
+            `timestamp_utc` DATETIME(3) NOT NULL,
+            `metrics_collected` BIGINT NOT NULL,
+            `metrics_written` BIGINT NOT NULL,
+            `metrics_dropped` BIGINT NOT NULL,
+            `database_errors` INT NOT NULL,
+            `queue_peak_size` INT NOT NULL,
+            INDEX `idx_health_session` (`session_id`),
+            CONSTRAINT `fk_health_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
+    };
+
     public DatabaseManager(TelemetryConfig config, BoundedChannelWriter queue, Action<string> log, Action<string> debug)
     {
         _config = config;
@@ -49,11 +145,52 @@ public sealed class DatabaseManager : IAsyncDisposable
 
     public void Start()
     {
-        _workerTask = Task.Run(() => WorkerLoopAsync(_cts.Token));
+        _workerTask = Task.Run(async () =>
+        {
+            await EnsureSchemaAsync();
+            await WorkerLoopAsync(_cts.Token);
+        });
+    }
+
+    public async Task EnsureSchemaAsync()
+    {
+        if (_tablesInitialized)
+            return;
+
+        await _initLock.WaitAsync();
+        try
+        {
+            if (_tablesInitialized)
+                return;
+
+            string connStr = _config.Database.BuildConnectionString();
+            await using var conn = new MySqlConnection(connStr);
+            await conn.OpenAsync();
+
+            foreach (var stmt in SchemaStatements)
+            {
+                await using var cmd = new MySqlCommand(stmt, conn);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            _tablesInitialized = true;
+            _log("[AegisTelemetry] Verified and initialized database schema tables.");
+        }
+        catch (Exception ex)
+        {
+            _queue.RecordDatabaseError();
+            _log($"[AegisTelemetry] Failed to initialize database schema: {ex.Message}");
+        }
+        finally
+        {
+            _initLock.Release();
+        }
     }
 
     public async Task<long> StartSessionAsync(string mapName, short tickRate = 64)
     {
+        await EnsureSchemaAsync();
+
         string connStr = _config.Database.BuildConnectionString();
         try
         {
@@ -401,6 +538,7 @@ public sealed class DatabaseManager : IAsyncDisposable
         {
             try { await _workerTask; } catch { }
         }
+        _initLock.Dispose();
         _cts.Dispose();
     }
 }
