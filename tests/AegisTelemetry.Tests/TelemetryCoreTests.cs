@@ -13,19 +13,17 @@ namespace AegisTelemetry.Tests;
 public class TelemetryCoreTests
 {
     [Fact]
-    public void Pseudonymizer_GeneratesDeterministicHexHash_WithoutExposingSteamId()
+    public void Pseudonymizer_ReturnsSteamIdDirectly_ForConsistentIdentification()
     {
         ulong steamId = 76561198012345678;
         string salt = "test-salt-1234";
 
-        string hash1 = Pseudonymizer.HashSteamId(steamId, salt);
-        string hash2 = Pseudonymizer.HashSteamId(steamId, salt);
-        string hashOtherSalt = Pseudonymizer.HashSteamId(steamId, "different-salt");
+        string id1 = Pseudonymizer.HashSteamId(steamId, salt);
+        string id2 = Pseudonymizer.HashSteamId(steamId, "different-salt");
 
-        Assert.Equal(32, hash1.Length);
-        Assert.Equal(hash1, hash2);
-        Assert.NotEqual(hash1, hashOtherSalt);
-        Assert.DoesNotContain(steamId.ToString(), hash1);
+        Assert.Equal("76561198012345678", id1);
+        Assert.Equal(id1, id2);
+        Assert.Equal("anonymous", Pseudonymizer.HashSteamId(0, salt));
     }
 
     [Fact]
