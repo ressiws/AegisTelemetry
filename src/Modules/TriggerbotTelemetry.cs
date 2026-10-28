@@ -94,6 +94,13 @@ public sealed class TriggerbotTelemetry
     private const float TraceLength = 8192.0f;
     private static readonly TimeSpan SmokeLifetime = TimeSpan.FromMilliseconds(22500);
 
+    private static readonly HashSet<string> BallisticWeapons = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ak47","aug","awp","bizon","cz75a","deagle","elite","famas","fiveseven","g3sg1","galilar","glock",
+        "hkp2000","m249","m4a1","m4a1_silencer","mac10","mag7","mp5sd","mp7","mp9","negev","nova","p250",
+        "p90","sawedoff","scar20","sg556","ssg08","tec9","ump45","usp_silencer","xm1014"
+    };
+
     private readonly TelemetryConfig _config;
     private readonly BoundedChannelWriter _queue;
     private readonly TelemetryStatsCalculator _stats;
@@ -331,6 +338,8 @@ public sealed class TriggerbotTelemetry
 
         var st = _players[id];
         string normWeapon = weapon.StartsWith("weapon_", StringComparison.OrdinalIgnoreCase) ? weapon[7..] : weapon;
+        if (!BallisticWeapons.Contains(normWeapon))
+            return;
 
         var pending = st.Pending.LastOrDefault(p => !p.Evaluated);
         if (pending == null)
@@ -354,11 +363,14 @@ public sealed class TriggerbotTelemetry
             return;
 
         var st = _players[id];
+        string normWeapon = weapon.StartsWith("weapon_", StringComparison.OrdinalIgnoreCase) ? weapon[7..] : weapon;
+        if (!BallisticWeapons.Contains(normWeapon))
+            return;
+
         var pending = st.Pending.LastOrDefault(p => p.TargetIndex == victim.PlayerID);
         if (pending == null)
             return;
 
-        string normWeapon = weapon.StartsWith("weapon_", StringComparison.OrdinalIgnoreCase) ? weapon[7..] : weapon;
         EmitRecord(attacker, pending, normWeapon, hitConfirmed: true, hitgroup: hitgroup);
         st.Pending.Remove(pending);
     }
@@ -385,7 +397,13 @@ public sealed class TriggerbotTelemetry
             SmokeOccluded = pending.SmokeOccluded
         };
 
-        _stats.RecordReactionTime(pending.ReactionMs);
+        // Only accumulate clean TargetDriven first-click reactions into the live calibration reservoir
+        // to prevent flick swipes (AimDriven) and continuous spray clicks from contaminating visual reaction time stats.
+        if (pending.ContactMode == TelemetryContactMode.TargetDriven && pending.PriorClicks == 0)
+        {
+            _stats.RecordReactionTime(pending.ReactionMs);
+        }
+
         _queue.Enqueue(record);
     }
 
