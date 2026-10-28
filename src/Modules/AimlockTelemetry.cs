@@ -186,7 +186,11 @@ public sealed class AimlockTelemetry
         if (pawn is null || !pawn.IsValid)
             return;
 
-        Vector origin = pawn.AbsOrigin ?? default;
+        Vector? maybeOrigin = pawn.AbsOrigin;
+        if (!maybeOrigin.HasValue || !AimMath.IsFinite(maybeOrigin.Value))
+            return;
+
+        Vector origin = maybeOrigin.Value;
         Vector eye = pawn.EyePosition ?? new Vector(origin.X, origin.Y, origin.Z + 64.0f);
         QAngle angles = st.CommandAngles.Count > 0 ? st.CommandAngles[^1] : pawn.EyeAngles;
 
@@ -252,10 +256,22 @@ public sealed class AimlockTelemetry
                 }
 
                 var targetPawn = target!.PlayerPawn;
-                Vector targetOrigin = targetPawn?.AbsOrigin ?? default;
-                float dist = sample.EyePosition.Distance(targetOrigin);
+                if (targetPawn is null || !targetPawn.IsValid)
+                {
+                    EndEpisode(playerId, completedNormally: false);
+                    return;
+                }
 
-                if (!AimMath.IsFinite(targetOrigin) || dist < 1.0f)
+                Vector? maybeTargetOrigin = targetPawn.AbsOrigin;
+                if (!maybeTargetOrigin.HasValue || !AimMath.IsFinite(maybeTargetOrigin.Value))
+                {
+                    EndEpisode(playerId, completedNormally: false);
+                    return;
+                }
+
+                Vector targetOrigin = maybeTargetOrigin.Value;
+                float dist = sample.EyePosition.Distance(targetOrigin);
+                if (dist < 1.0f)
                 {
                     EndEpisode(playerId, completedNormally: false);
                     return;
@@ -314,9 +330,16 @@ public sealed class AimlockTelemetry
                     continue;
 
                 var targetPawn = target!.PlayerPawn;
-                Vector targetOrigin = targetPawn?.AbsOrigin ?? default;
+                if (targetPawn is null || !targetPawn.IsValid)
+                    continue;
+
+                Vector? maybeTargetOrigin = targetPawn.AbsOrigin;
+                if (!maybeTargetOrigin.HasValue || !AimMath.IsFinite(maybeTargetOrigin.Value))
+                    continue;
+
+                Vector targetOrigin = maybeTargetOrigin.Value;
                 float dist = sample.EyePosition.Distance(targetOrigin);
-                if (!AimMath.IsFinite(targetOrigin) || dist < 1.0f)
+                if (dist < 1.0f)
                     continue;
 
                 float maxErr = MathF.Atan2(PlayerHalfWidth, dist) * (180.0f / MathF.PI);

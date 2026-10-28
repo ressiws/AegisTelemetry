@@ -190,7 +190,7 @@ public sealed class TriggerbotTelemetry
             if (idx >= 0 && idx < histCount)
             {
                 var entry = pb.InputHistory.Get(idx);
-                if (entry.Accessor.HasField("view_angles"))
+                if (entry != null && entry.Accessor != null && entry.Accessor.HasField("view_angles"))
                 {
                     QAngle shotAngles = entry.ViewAngles;
                     if (AimMath.IsFinite(shotAngles))
@@ -398,61 +398,51 @@ public sealed class TriggerbotTelemetry
         Vector forward = AimMath.Forward(angles);
         Vector end = new(eye.X + forward.X * TraceLength, eye.Y + forward.Y * TraceLength, eye.Z + forward.Z * TraceLength);
 
-        TraceResult trace;
-        try
+        float maxDistance = TraceLength;
+
+        // Native engine trace is optional and disabled by default to avoid unmanaged C++ engine crashes during sprays/movement.
+        if (_config.EnableNativeTrace)
         {
-            var traceParams = new TraceParams
+            try
             {
-                InteractWith = MaskTrace.Solid | MaskTrace.Hitbox | MaskTrace.Player |
-                               MaskTrace.CsgoTeam1 | MaskTrace.CsgoTeam2 |
-                               MaskTrace.CsgoMonster | MaskTrace.CsgoMoveable | MaskTrace.Window,
-                EntitiesToIgnore = [pawn]
-            };
+                var traceParams = new TraceParams
+                {
+                    InteractWith = MaskTrace.Solid | MaskTrace.Hitbox | MaskTrace.Player |
+                                   MaskTrace.CsgoTeam1 | MaskTrace.CsgoTeam2
+                };
 
-            trace = _traceManager.TraceShapeLine(eye, end, traceParams);
-        }
-        catch (Exception ex)
-        {
-            _debug($"[TriggerbotTelemetry] Trace exception: {ex.Message}");
-            return (-1, Vector.Zero);
-        }
+                var trace = _traceManager.TraceShapeLine(eye, end, traceParams);
+                if (trace.DidHit && trace.Distance > 0.0f)
+                    maxDistance = trace.Distance;
 
-        // 1. Direct native trace hit check (fast path)
-        if (trace.DidHit && trace.Entity != null)
-        {
-            uint hitIndex = trace.Entity.Index;
-            nint hitAddress = trace.Entity.Address;
+                if (trace.DidHit && trace.Entity != null && trace.Entity.IsValid)
+                {
+                    uint hitIndex = trace.Entity.Index;
+                    for (int i = 0; i < MaxPlayers; i++)
+                    {
+                        var target = _getPlayer(i);
+                        if (!PlayerFilter.IsValidTarget(target) || target!.PlayerID == player.PlayerID)
+                            continue;
 
-            for (int i = 0; i < MaxPlayers; i++)
+                        if (!PlayerFilter.AreEnemies(player, target))
+                            continue;
+
+                        var targetPawn = target.PlayerPawn;
+                        if (targetPawn != null && targetPawn.IsValid && targetPawn.Index == hitIndex)
+                            return (target.PlayerID, trace.EndPos);
+                    }
+                }
+            }
+            catch (Exception ex)
             {
-                var target = _getPlayer(i);
-                if (target is not { IsValid: true } || target.PlayerID == player.PlayerID)
-                    continue;
-
-                if (!target.IsAlive || !PlayerFilter.AreEnemies(player, target))
-                    continue;
-
-                var targetPawn = target.PlayerPawn;
-                var targetCtrl = target.Controller;
-
-                bool directHit = false;
-                if (targetPawn != null && targetPawn.IsValid && (targetPawn.Index == hitIndex || targetPawn.Address == hitAddress))
-                    directHit = true;
-                else if (targetCtrl != null && targetCtrl.IsValid && (targetCtrl.Index == hitIndex || targetCtrl.Address == hitAddress))
-                    directHit = true;
-                else if (target.PlayerID == (int)hitIndex)
-                    directHit = true;
-
-                if (directHit)
-                    return (target.PlayerID, trace.EndPos);
+                _debug($"[TriggerbotTelemetry] Trace exception: {ex.Message}");
             }
         }
 
-        // 2. Geometric cylinder intersection fallback
-        float maxDistance = (trace.DidHit && trace.Distance > 0.0f) ? trace.Distance : TraceLength;
+        // Geometric cylinder intersection fallback (100% managed C#, zero native calls, zero SIGSEGV risk)
         int bestTarget = -1;
         float bestDist = float.MaxValue;
-        Vector bestPoint = trace.DidHit ? trace.EndPos : end;
+        Vector bestPoint = end;
 
         for (int i = 0; i < MaxPlayers; i++)
         {
@@ -467,9 +457,11 @@ public sealed class TriggerbotTelemetry
             if (targetPawn is null || !targetPawn.IsValid)
                 continue;
 
-            Vector origin = targetPawn.AbsOrigin ?? default;
-            if (!AimMath.IsFinite(origin))
+            Vector? maybeOrigin = targetPawn.AbsOrigin;
+            if (!maybeOrigin.HasValue || !AimMath.IsFinite(maybeOrigin.Value))
                 continue;
+
+            Vector origin = maybeOrigin.Value;
 
             float dx = origin.X - eye.X;
             float dy = origin.Y - eye.Y;

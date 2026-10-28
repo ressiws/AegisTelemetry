@@ -87,4 +87,10 @@ public sealed class TelemetryConfig
 
     [Description("Enable Aimlock metrics telemetry collection.")]
     public bool EnableAimlockTelemetry { get; set; } = true;
+
+    [Description("Treat teammates as enemies (useful for deathmatch or FFA servers).")]
+    public bool TeammatesAreEnemies { get; set; } = false;
+
+    [Description("Use engine native trace for triggerbot crosshair raycasting. When false, uses 100% managed geometric cylinder raycasting to avoid native engine crashes.")]
+    public bool EnableNativeTrace { get; set; } = false;
 }

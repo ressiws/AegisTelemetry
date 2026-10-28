@@ -138,7 +138,15 @@ public sealed class AegisTelemetryPlugin : BasePlugin
         if (loaded != null)
         {
             _config = loaded;
+            PlayerFilter.TeammatesAreEnemies = _config.TeammatesAreEnemies;
         }
+
+        try
+        {
+            if (Core.ConVar.Find<bool>("mp_teammates_are_enemies")?.Value is bool cvarVal)
+                PlayerFilter.TeammatesAreEnemies = _config.TeammatesAreEnemies || cvarVal;
+        }
+        catch { }
     }
 
     private int CurrentTick
@@ -244,6 +252,13 @@ public sealed class AegisTelemetryPlugin : BasePlugin
             _aimbot.Reset();
             _triggerbot.Reset();
             _aimlock.Reset();
+
+            try
+            {
+                if (Core.ConVar.Find<bool>("mp_teammates_are_enemies")?.Value is bool cvarVal)
+                    PlayerFilter.TeammatesAreEnemies = _config.TeammatesAreEnemies || cvarVal;
+            }
+            catch { }
 
             long oldSession = _dbManager.CurrentSessionId;
             if (oldSession > 0)
