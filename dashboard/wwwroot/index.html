@@ -466,7 +466,7 @@
             <table class="w-full text-xs text-left text-gray-300">
               <thead class="text-gray-400 bg-[#0d1117] uppercase border-b border-[#30363d]">
                 <tr>
-                  <th class="py-2.5 px-3">Conta / Hash</th>
+                  <th class="py-2.5 px-3">Conta / SteamID</th>
                   <th class="py-2.5 px-3">Risco</th>
                   <th class="py-2.5 px-3">Deteções</th>
                   <th class="py-2.5 px-3">Estado da Mira (Snaps)</th>
@@ -1008,12 +1008,23 @@
             return `<span class="badge ${color} border text-[10px] mr-1">${m}</span>`;
           }).join('');
 
+          const isSteam = c.playerHash.startsWith("7656") || (c.playerHash.length === 17 && !isNaN(c.playerHash));
+          const accountDisplay = isSteam ? `
+            <a href="https://steamcommunity.com/profiles/${c.playerHash}" target="_blank" class="text-indigo-400 hover:text-indigo-300 font-mono font-semibold flex items-center gap-1.5 hover:underline" title="Ver Perfil Steam">
+              <i class="fa-brands fa-steam text-sm text-indigo-400"></i> ${c.playerHash}
+            </a>
+          ` : `
+            <span class="font-mono text-gray-300">${c.shortHash}...</span>
+          `;
+
           tr.innerHTML = `
-            <td class="py-3 px-3 font-mono font-medium text-white flex items-center gap-1.5">
-              <span>${c.shortHash}...</span>
-              <button onclick="navigator.clipboard.writeText('${c.playerHash}'); showToast('Hash copiado!')" class="text-gray-500 hover:text-gray-300 text-xs" title="Copiar Hash Completo">
-                <i class="fa-regular fa-copy"></i>
-              </button>
+            <td class="py-3 px-3 font-medium text-white">
+              <div class="flex items-center gap-1.5">
+                ${accountDisplay}
+                <button onclick="navigator.clipboard.writeText('${c.playerHash}'); showToast('SteamID copiado!')" class="text-gray-500 hover:text-gray-300 text-xs" title="Copiar SteamID">
+                  <i class="fa-regular fa-copy"></i>
+                </button>
+              </div>
             </td>
             <td class="py-3 px-3">
               <span class="badge ${threatBadge} border text-[10px] uppercase">${c.threatLevel}</span>
@@ -1057,7 +1068,14 @@
 
     async function openCheaterDetails(hash) {
       selectedCheaterHash = hash;
-      document.getElementById('modal-cheater-hash').textContent = `${hash.substring(0, 16)}...`;
+      const isSteam = hash.startsWith("7656") || (hash.length === 17 && !isNaN(hash));
+      const hashEl = document.getElementById('modal-cheater-hash');
+      if (isSteam) {
+        hashEl.innerHTML = `<a href="https://steamcommunity.com/profiles/${hash}" target="_blank" class="text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1.5"><i class="fa-brands fa-steam"></i> ${hash}</a>`;
+      } else {
+        hashEl.textContent = hash;
+      }
+
       document.getElementById('modal-cheater-reasons').textContent = "A carregar histórico detalhado de telemetria...";
       document.getElementById('cheater-detail-modal').classList.remove('hidden');
 
@@ -1144,7 +1162,7 @@
     function copyModalHash() {
       if (!selectedCheaterHash) return;
       navigator.clipboard.writeText(selectedCheaterHash);
-      showToast("Hash completo copiado!");
+      showToast("SteamID copiado!");
     }
 
     function switchTab(tabId) {

@@ -786,11 +786,15 @@ app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = 
             while (await r.ReadAsync())
             {
                 string hash = r.GetString(2);
-                if (excludeOutliers && suspectHashes.Contains(hash))
+                float snap = r.GetFloat(0);
+                float eff = r.GetFloat(1);
+
+                // Strictly exclude identified cheater accounts AND any raw superhuman outlier shots (> 26.0°)
+                if (excludeOutliers && (suspectHashes.Contains(hash) || snap > 26.0f))
                     continue;
 
-                snapList.Add(r.GetFloat(0));
-                effList.Add(r.GetFloat(1));
+                snapList.Add(snap);
+                effList.Add(eff);
             }
         }
 
@@ -802,10 +806,13 @@ app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = 
             while (await r.ReadAsync())
             {
                 string hash = r.GetString(1);
-                if (excludeOutliers && suspectHashes.Contains(hash))
+                float ms = r.GetFloat(0);
+
+                // Strictly exclude cheaters and superhuman reactions (< 85ms)
+                if (excludeOutliers && (suspectHashes.Contains(hash) || ms < 85.0f))
                     continue;
 
-                reactList.Add(r.GetFloat(0));
+                reactList.Add(ms);
             }
         }
 
@@ -818,11 +825,15 @@ app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = 
             while (await r.ReadAsync())
             {
                 string hash = r.GetString(2);
-                if (excludeOutliers && suspectHashes.Contains(hash))
+                float dur = r.GetFloat(0);
+                float disp = r.GetFloat(1);
+
+                // Strictly exclude cheaters and superhuman lock episodes (> 1.85s)
+                if (excludeOutliers && (suspectHashes.Contains(hash) || dur > 1.85f))
                     continue;
 
-                lockList.Add(r.GetFloat(0));
-                dispList.Add(r.GetFloat(1));
+                lockList.Add(dur);
+                dispList.Add(disp);
             }
         }
 
@@ -832,12 +843,12 @@ app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = 
         var lockStats = CalculatePercentiles(lockList);
         var dispStats = CalculatePercentiles(dispList);
 
-        // Derive safe thresholds
-        float suggestedSnapThreshold = snapStats != null ? MathF.Max(20.0f, snapStats.P99 * 1.25f) : 22.0f;
-        float suggestedMinSmoothMovement = snapStats != null ? MathF.Max(12.0f, snapStats.P95 * 1.3f) : 13.0f;
-        float suggestedSmoothEfficiency = effStats != null ? MathF.Min(0.96f, MathF.Max(0.92f, effStats.P99 * 0.98f)) : 0.94f;
-        float suggestedReactionMs = reactStats != null && reactStats.SampleCount >= 5 ? MathF.Max(90.0f, reactStats.Min * 0.85f) : 100.0f;
-        float suggestedLockDuration = lockStats != null ? MathF.Max(1.6f, lockStats.P99 * 1.35f) : 2.0f;
+        // Derive safe thresholds capped within legitimate boundaries so testing cheats NEVER inflates limits
+        float suggestedSnapThreshold = snapStats != null ? MathF.Min(26.1f, MathF.Max(20.0f, snapStats.P99 * 1.25f)) : 26.1f;
+        float suggestedMinSmoothMovement = snapStats != null ? MathF.Min(14.0f, MathF.Max(12.0f, snapStats.P95 * 1.3f)) : 12.0f;
+        float suggestedSmoothEfficiency = effStats != null ? MathF.Min(0.96f, MathF.Max(0.92f, effStats.P99 * 0.98f)) : 0.96f;
+        float suggestedReactionMs = reactStats != null && reactStats.SampleCount >= 5 ? MathF.Min(90.0f, MathF.Max(80.0f, reactStats.Min * 0.85f)) : 90.0f;
+        float suggestedLockDuration = lockStats != null ? MathF.Min(2.1f, MathF.Max(1.6f, lockStats.P99 * 1.35f)) : 1.95f;
 
         var sb = new StringBuilder();
         sb.AppendLine("# 🛡️ AegisAC Calibration Report");
@@ -1052,29 +1063,27 @@ static async Task<(Dictionary<string, CheaterProfile> cheaters, HashSet<string> 
             bool isAimbotSuspect = false;
             var reasons = new List<string>();
 
-            if (total >= 8 && gt26Ratio > 0.12f)
+            // 1. Instant flag on extreme snaps (human P99 is ~20.8°; anything >= 26° is superhuman)
+            if (maxSnap >= 26.0f)
             {
                 isAimbotSuspect = true;
-                reasons.Add($"Extreme snaps: {gt26}/{total} ({gt26Ratio * 100:F1}%) snaps > 26.0° (max {maxSnap:F1}°)");
+                reasons.Add($"Extreme superhuman snap: {maxSnap:F1}° (human limit < 25.0°)");
             }
-            else if (total >= 5 && maxSnap > 35.0f)
+            else if (total >= 3 && gt20Ratio > 0.20f)
             {
                 isAimbotSuspect = true;
-                reasons.Add($"Inhuman maximum snap of {maxSnap:F1}° (human max < 25°)");
-            }
-            else if (total >= 10 && gt20Ratio > 0.25f)
-            {
-                isAimbotSuspect = true;
-                reasons.Add($"Abnormal flick frequency: {gt20Ratio * 100:F1}% of shots > 20°");
+                reasons.Add($"Abnormal flick frequency: {gt20Ratio * 100:F1}% of shots > 20.0°");
             }
 
-            if (total >= 10 && avgEff > 0.95f && avgSteps >= 3.5f && maxSnap > 14.0f)
+            // 2. Robotic linear aim convergence
+            if (total >= 4 && avgEff > 0.95f && avgSteps >= 3.0f && maxSnap > 12.0f)
             {
                 isAimbotSuspect = true;
                 reasons.Add($"Robotic linear convergence: Path efficiency {avgEff * 100:F1}%, {avgSteps:F1} monotonic steps");
             }
 
-            if (hits >= 8 && hsRatio > 0.85f && avgSnap > 6.0f)
+            // 3. Superhuman headshot ratio
+            if (hits >= 5 && hsRatio > 0.85f && avgSnap > 6.0f)
             {
                 isAimbotSuspect = true;
                 reasons.Add($"Superhuman headshot focus: {hsRatio * 100:F1}% headshots across {hits} hits");
@@ -1148,15 +1157,15 @@ static async Task<(Dictionary<string, CheaterProfile> cheaters, HashSet<string> 
             bool isTriggerSuspect = false;
             var reasons = new List<string>();
 
-            if (clean >= 3 && avgReact < 85.0f)
+            if (clean >= 1 && minReact < 85.0f)
             {
                 isTriggerSuspect = true;
-                reasons.Add($"Inhuman triggerbot reaction: Avg {avgReact:F1}ms (human limit ~120-150ms)");
+                reasons.Add($"Sub-frame trigger response: Min {minReact:F1}ms on target-driven crosshair (human limit ~120-150ms)");
             }
-            else if (clean >= 2 && minReact < 45.0f)
+            else if (clean >= 2 && avgReact < 95.0f)
             {
                 isTriggerSuspect = true;
-                reasons.Add($"Sub-frame trigger response: Min {minReact:F1}ms on target-driven crosshair");
+                reasons.Add($"Inhuman triggerbot average: Avg {avgReact:F1}ms across {clean} target-driven reactions");
             }
 
             if (isTriggerSuspect)
@@ -1199,12 +1208,12 @@ static async Task<(Dictionary<string, CheaterProfile> cheaters, HashSet<string> 
             bool isLockSuspect = false;
             var reasons = new List<string>();
 
-            if (total >= 2 && maxDur > 1.85f && avgRatio > 0.85f)
+            if (maxDur > 1.80f && avgRatio > 0.80f)
             {
                 isLockSuspect = true;
-                reasons.Add($"Persistent aimlock: Lock duration {maxDur:F2}s with {avgRatio * 100:F1}% on-target ratio");
+                reasons.Add($"Persistent aimlock: Lock duration {maxDur:F2}s with {avgRatio * 100:F1}% on-target ratio (human P99 is ~1.44s)");
             }
-            else if (maxDur > 2.3f)
+            else if (maxDur > 2.2f)
             {
                 isLockSuspect = true;
                 reasons.Add($"Unnatural sticky tracking: Max lock {maxDur:F2}s (exceeds human spray tracking limit)");
@@ -1301,6 +1310,9 @@ public class CheaterProfile
 {
     public string PlayerHash { get; set; } = "";
     public string ShortHash => PlayerHash.Length >= 10 ? PlayerHash[..10] : PlayerHash;
+    public bool IsSteamId => ulong.TryParse(PlayerHash, out ulong id) && id > 76561190000000000;
+    public string SteamId => PlayerHash;
+    public string DisplayIdentifier => IsSteamId ? PlayerHash : ShortHash;
     public string ThreatLevel { get; set; } = "SUSPECT"; // "CRITICAL / RAGE", "HIGH RISK", "SUSPECT"
     public List<string> DetectedModules { get; set; } = new();
     public List<string> Reasons { get; set; } = new();

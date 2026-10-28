@@ -26,13 +26,7 @@ public static class Pseudonymizer
         if (steamId == 0)
             return "anonymous";
 
-        byte[] keyBytes = Encoding.UTF8.GetBytes(string.IsNullOrEmpty(salt) ? "aegis-default-salt" : salt);
-        byte[] dataBytes = BitConverter.GetBytes(steamId);
-
-        using var hmac = new HMACSHA256(keyBytes);
-        byte[] hash = hmac.ComputeHash(dataBytes);
-
-        // Return first 16 bytes formatted as 32 hex chars for compact indexing
-        return Convert.ToHexString(hash, 0, 16).ToLowerInvariant();
+        // Store real SteamID64 as string for persistent account identification across servers
+        return steamId.ToString();
     }
 }
