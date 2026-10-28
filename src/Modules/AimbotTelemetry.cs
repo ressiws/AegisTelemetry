@@ -101,7 +101,7 @@ public sealed class AimbotTelemetry
     private readonly Action<string> _debug;
 
     private readonly TelemetryAimbotPlayerState[] _players = new TelemetryAimbotPlayerState[MaxPlayers];
-    private readonly List<TelemetryPositionFrame> _frames = new();
+    private readonly TelemetryPositionFrame[] _frames = new TelemetryPositionFrame[PositionHistoryLimit];
 
     public AimbotTelemetry(TelemetryConfig config, BoundedChannelWriter queue, TelemetryStatsCalculator stats, Func<int, IPlayer?> getPlayer, Action<string> debug)
     {
@@ -113,19 +113,28 @@ public sealed class AimbotTelemetry
 
         for (int i = 0; i < _players.Length; i++)
             _players[i] = new TelemetryAimbotPlayerState();
+        for (int i = 0; i < _frames.Length; i++)
+            _frames[i] = new TelemetryPositionFrame();
     }
 
     public void Reset()
     {
         for (int i = 0; i < _players.Length; i++)
             _players[i].Reset();
-        _frames.Clear();
+        for (int i = 0; i < _frames.Length; i++)
+        {
+            _frames[i].ServerTick = -1;
+            Array.Clear(_frames[i].Players);
+        }
     }
 
     public void OnClientDisconnect(int id)
     {
         if (id >= 0 && id < _players.Length)
             _players[id].Reset();
+
+        for (int i = 0; i < _frames.Length; i++)
+            _frames[i].Players[id] = default;
     }
 
     public void OnPlayerDeath(int victimId)
@@ -156,7 +165,18 @@ public sealed class AimbotTelemetry
             var pb = cmd.CSGOUserCmd;
             int number = (int)cmd.CommandNumber;
 
-            if (st.Commands.Exists(c => c.CommandNumber == number))
+            bool isDup = false;
+            for (int ci = st.Commands.Count - 1; ci >= 0; ci--)
+            {
+                if (st.Commands[ci].CommandNumber == number)
+                {
+                    isDup = true;
+                    break;
+                }
+                if (st.Commands[ci].CommandNumber < number)
+                    break;
+            }
+            if (isDup)
                 continue;
 
             if (!pb.Accessor.HasField("base"))
@@ -264,21 +284,32 @@ public sealed class AimbotTelemetry
 
     private void CaptureFrame(int tick)
     {
-        var frame = new TelemetryPositionFrame { ServerTick = tick };
+        int slot = tick & (PositionHistoryLimit - 1);
+        var frame = _frames[slot];
+        frame.ServerTick = tick;
 
         for (int id = 0; id < MaxPlayers; id++)
         {
             var p = _getPlayer(id);
             if (p == null || !p.IsValid || !p.IsAlive)
+            {
+                frame.Players[id] = default;
                 continue;
+            }
 
             var pawn = p.PlayerPawn;
             if (pawn == null || !pawn.IsValid)
+            {
+                frame.Players[id] = default;
                 continue;
+            }
 
             Vector? maybeOrigin = pawn.AbsOrigin;
             if (!maybeOrigin.HasValue || !AimMath.IsFinite(maybeOrigin.Value))
+            {
+                frame.Players[id] = default;
                 continue;
+            }
 
             Vector origin = maybeOrigin.Value;
             var eye = pawn.EyePosition ?? new Vector(origin.X, origin.Y, origin.Z + 64.0f);
@@ -291,15 +322,6 @@ public sealed class AimbotTelemetry
                 Valid = true,
                 Alive = pawn.LifeState == 0
             };
-        }
-
-        if (_frames.Count > 0 && _frames[^1].ServerTick == tick)
-            _frames[^1] = frame;
-        else
-        {
-            _frames.Add(frame);
-            if (_frames.Count > PositionHistoryLimit)
-                _frames.RemoveAt(0);
         }
     }
 
@@ -317,18 +339,29 @@ public sealed class AimbotTelemetry
             return;
 
         var st = _players[id];
-        var candidates = st.Commands
-            .Where(c => c.IsShot && c.Simulated && !c.Consumed && (long)currentTick - c.ServerTick is >= -1 and <= 1)
-            .ToArray();
-
-        if (candidates.Length != 1)
+        TelemetryAimCommand? matchedCandidate = null;
+        int candidateCount = 0;
+        for (int ci = st.Commands.Count - 1; ci >= 0; ci--)
         {
-            foreach (var c in candidates)
-                c.Consumed = true;
+            var c = st.Commands[ci];
+            if (c.IsShot && c.Simulated && !c.Consumed && (long)currentTick - c.ServerTick is >= -1 and <= 1)
+            {
+                candidateCount++;
+                if (candidateCount == 1)
+                    matchedCandidate = c;
+                else
+                    c.Consumed = true;
+            }
+        }
+
+        if (candidateCount != 1 || matchedCandidate == null)
+        {
+            if (matchedCandidate != null)
+                matchedCandidate.Consumed = true;
             return;
         }
 
-        var command = candidates[0];
+        var command = matchedCandidate;
         command.Consumed = true;
 
         st.Shots.Add(new TelemetryShotRecord
@@ -373,8 +406,9 @@ public sealed class AimbotTelemetry
             if (!cmd.Simulated)
                 return;
 
-            var frame = _frames.Find(f => f.ServerTick == cmd.ServerTick);
-            if (frame == null)
+            int slot = cmd.ServerTick & (PositionHistoryLimit - 1);
+            var frame = _frames[slot];
+            if (frame.ServerTick != cmd.ServerTick)
                 return;
 
             int attackerId = attacker.PlayerID;
@@ -442,8 +476,9 @@ public sealed class AimbotTelemetry
                 if (cmd.ServerTick - older.ServerTick > SnapWindowTicks)
                     break;
 
-                var olderFrame = _frames.Find(f => f.ServerTick == older.ServerTick);
-                if (olderFrame == null ||
+                int olderSlot = older.ServerTick & (PositionHistoryLimit - 1);
+                var olderFrame = _frames[olderSlot];
+                if (olderFrame.ServerTick != older.ServerTick ||
                     targetId >= olderFrame.Players.Length || attackerId >= olderFrame.Players.Length ||
                     !olderFrame.Players[targetId].Valid || !olderFrame.Players[attackerId].Valid)
                     break;

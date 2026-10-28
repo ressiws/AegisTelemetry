@@ -179,7 +179,18 @@ public sealed class TriggerbotTelemetry
             var pb = cmd.CSGOUserCmd;
             int number = (int)cmd.CommandNumber;
 
-            if (st.Commands.Exists(c => c.CommandNumber == number))
+            bool isDup = false;
+            for (int ci = st.Commands.Count - 1; ci >= 0; ci--)
+            {
+                if (st.Commands[ci].CommandNumber == number)
+                {
+                    isDup = true;
+                    break;
+                }
+                if (st.Commands[ci].CommandNumber < number)
+                    break;
+            }
+            if (isDup)
                 continue;
 
             if (!pb.Accessor.HasField("base"))
@@ -287,10 +298,13 @@ public sealed class TriggerbotTelemetry
         st.LastAngles = viewAngles;
         st.LastAnglesValid = true;
 
-        // Prune expired smokes
-        var now = DateTime.UtcNow;
-        _smokes.RemoveAll(s => s.Expires <= now);
-        bool smokeOccluded = targetIndex >= 0 && _smokes.Any(s => SegmentTouchesSmoke(eye, hitPoint, s.Center));
+        // Prune expired smokes periodically (once per second at 64-tick)
+        if (_smokes.Count > 0 && (currentTick & 63) == 0)
+        {
+            var now = DateTime.UtcNow;
+            _smokes.RemoveAll(s => s.Expires <= now);
+        }
+        bool smokeOccluded = targetIndex >= 0 && _smokes.Count > 0 && _smokes.Any(s => SegmentTouchesSmoke(eye, hitPoint, s.Center));
 
         if (isFreshAttack && targetIndex >= 0 && st.ContactStartCommand >= 0)
         {
