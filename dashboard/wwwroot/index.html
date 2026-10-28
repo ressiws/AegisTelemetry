@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AegisAC Telemetry Dashboard & Calibration</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 0.5rem; }
+    .card-header { border-bottom: 1px solid #30363d; }
+    .badge { padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Navigation Bar -->
+  <nav class="bg-[#161b22] border-b border-[#30363d] px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+        <i class="fa-solid fa-shield-halved text-lg"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold text-white flex items-center gap-2">
+          AegisAC Telemetry
+          <span class="text-xs bg-indigo-900/50 text-indigo-300 border border-indigo-700/50 px-2 py-0.5 rounded">Live Calibration</span>
+        </h1>
+        <p class="text-xs text-gray-400">MariaDB Telemetry Distributions for Anti-Cheat Calibration</p>
+      </div>
+    </div>
+
+    <!-- Status & Quick Actions -->
+    <div class="flex items-center space-x-3">
+      <div id="db-status-pill" class="flex items-center space-x-2 bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-full text-xs">
+        <span id="db-dot" class="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse"></span>
+        <span id="db-text" class="text-gray-300">Checking DB...</span>
+      </div>
+
+      <button onclick="refreshAll()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
+        <i class="fa-solid fa-rotate-right" id="refresh-icon"></i> Refresh
+      </button>
+
+      <button onclick="openConfigModal()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition">
+        <i class="fa-solid fa-gear"></i> DB Settings
+      </button>
+
+      <button onclick="exportReport()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-3.5 py-1.5 rounded-lg text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition">
+        <i class="fa-solid fa-copy"></i> Export Report for Chat
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+
+    <!-- Top KPI Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Card 1: Sessions -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between text-gray-400 text-xs mb-1">
+          <span>SESSIONS & MAPS</span>
+          <i class="fa-solid fa-server text-indigo-400"></i>
+        </div>
+        <div class="flex items-baseline space-x-2">
+          <span id="kpi-sessions" class="text-2xl font-bold text-white">0</span>
+          <span class="text-xs text-gray-400">sessions</span>
+        </div>
+        <div id="kpi-sessions-sub" class="text-xs text-gray-400 mt-2 truncate">0 servers | 0 maps</div>
+      </div>
+
+      <!-- Card 2: Aimbot -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between text-gray-400 text-xs mb-1">
+          <span>AIMBOT SHOTS</span>
+          <i class="fa-solid fa-crosshairs text-emerald-400"></i>
+        </div>
+        <div class="flex items-baseline space-x-2">
+          <span id="kpi-shots" class="text-2xl font-bold text-white">0</span>
+          <span id="kpi-hitrate" class="text-xs text-emerald-400 font-semibold">(0% hit)</span>
+        </div>
+        <div id="kpi-shots-sub" class="text-xs text-gray-400 mt-2 truncate">0 unique players</div>
+      </div>
+
+      <!-- Card 3: Triggerbot -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between text-gray-400 text-xs mb-1">
+          <span>TRIGGERBOT REACTIONS</span>
+          <i class="fa-solid fa-bolt text-amber-400"></i>
+        </div>
+        <div class="flex items-baseline space-x-2">
+          <span id="kpi-reactions" class="text-2xl font-bold text-white">0</span>
+          <span class="text-xs text-gray-400">reactions</span>
+        </div>
+        <div id="kpi-reactions-sub" class="text-xs text-gray-400 mt-2 truncate">0 target | 0 aim driven</div>
+      </div>
+
+      <!-- Card 4: Aimlock -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between text-gray-400 text-xs mb-1">
+          <span>AIMLOCK TRACKING</span>
+          <i class="fa-solid fa-lock text-purple-400"></i>
+        </div>
+        <div class="flex items-baseline space-x-2">
+          <span id="kpi-locks" class="text-2xl font-bold text-white">0</span>
+          <span class="text-xs text-gray-400">episodes</span>
+        </div>
+        <div id="kpi-locks-sub" class="text-xs text-gray-400 mt-2 truncate">Avg duration: 0.00s (Max: 0.00s)</div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex border-b border-[#30363d] space-x-4">
+      <button onclick="switchTab('overview')" id="tab-btn-overview" class="pb-3 text-sm font-semibold text-indigo-400 border-b-2 border-indigo-500 flex items-center gap-2">
+        <i class="fa-solid fa-sliders"></i> Calibration Recommendations
+      </button>
+      <button onclick="switchTab('aimbot')" id="tab-btn-aimbot" class="pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2">
+        <i class="fa-solid fa-crosshairs"></i> Aimbot Analysis
+      </button>
+      <button onclick="switchTab('triggerbot')" id="tab-btn-triggerbot" class="pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2">
+        <i class="fa-solid fa-bolt"></i> Triggerbot Analysis
+      </button>
+      <button onclick="switchTab('aimlock')" id="tab-btn-aimlock" class="pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2">
+        <i class="fa-solid fa-lock"></i> Aimlock Analysis
+      </button>
+    </div>
+
+    <!-- TAB 1: OVERVIEW & CALIBRATION -->
+    <div id="tab-overview" class="space-y-6">
+      <div class="card p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-base font-bold text-white flex items-center gap-2">
+              <i class="fa-solid fa-wand-magic-sparkles text-indigo-400"></i>
+              Calculated AegisAC Thresholds (Safe from False Positives)
+            </h2>
+            <p class="text-xs text-gray-400">Based on human 99th percentiles with safe anti-cheat buffers derived from your database.</p>
+          </div>
+          <button onclick="copyGeneratedMarkdown()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition">
+            <i class="fa-regular fa-copy"></i> Copy Markdown Report
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+            <div class="text-xs text-gray-400 font-semibold mb-1 flex items-center justify-between">
+              <span>AIMBOT SNAP THRESHOLD</span>
+              <span class="badge bg-emerald-950 text-emerald-400 border border-emerald-800">Aimbot</span>
+            </div>
+            <div id="rec-snap" class="text-3xl font-extrabold text-white">--°</div>
+            <p class="text-xs text-gray-400 mt-2">Recommended for <code class="text-indigo-300">Aimbot.SnapAngleThreshold</code>. Exceeds 99% of legit human flicks.</p>
+          </div>
+
+          <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+            <div class="text-xs text-gray-400 font-semibold mb-1 flex items-center justify-between">
+              <span>TRIGGERBOT REACTION</span>
+              <span class="badge bg-amber-950 text-amber-400 border border-amber-800">Triggerbot</span>
+            </div>
+            <div id="rec-reaction" class="text-3xl font-extrabold text-white">-- ms</div>
+            <p class="text-xs text-gray-400 mt-2">Recommended for <code class="text-indigo-300">Triggerbot.MaxReactionTimeMs</code>. Below legit human minimum reaction.</p>
+          </div>
+
+          <div class="bg-[#0d1117] border border-[#30363d] p-4 rounded-lg">
+            <div class="text-xs text-gray-400 font-semibold mb-1 flex items-center justify-between">
+              <span>AIMLOCK DURATION</span>
+              <span class="badge bg-purple-950 text-purple-400 border border-purple-800">Aimlock</span>
+            </div>
+            <div id="rec-lock" class="text-3xl font-extrabold text-white">-- s</div>
+            <p class="text-xs text-gray-400 mt-2">Recommended for <code class="text-indigo-300">Aimlock.TrackingDurationSeconds</code>. Exceeds legit human spray tracking.</p>
+          </div>
+        </div>
+
+        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 font-mono text-xs text-gray-300 overflow-x-auto max-h-96">
+          <pre id="raw-markdown-preview" class="whitespace-pre-wrap">Loading calibration report from database...</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: AIMBOT -->
+    <div id="tab-aimbot" class="hidden space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Snap Angle Chart -->
+        <div class="card p-5">
+          <h3 class="text-sm font-bold text-white mb-2 flex items-center justify-between">
+            <span>Aimbot Snap Angle (°) Distribution</span>
+            <span class="text-xs text-gray-400">1-tick jump</span>
+          </h3>
+          <div class="h-64">
+            <canvas id="chartSnap"></canvas>
+          </div>
+        </div>
+
+        <!-- Path Efficiency Chart -->
+        <div class="card p-5">
+          <h3 class="text-sm font-bold text-white mb-2 flex items-center justify-between">
+            <span>Mouse Path Efficiency (%) Distribution</span>
+            <span class="text-xs text-gray-400">Direct dist / total path</span>
+          </h3>
+          <div class="h-64">
+            <canvas id="chartEff"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Percentile Summary Table -->
+      <div class="card p-5">
+        <h3 class="text-sm font-bold text-white mb-4">Aimbot Core Metrics Distribution Table</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left text-gray-300">
+            <thead class="text-gray-400 bg-[#0d1117] uppercase border-b border-[#30363d]">
+              <tr>
+                <th class="py-2.5 px-4">Metric</th>
+                <th class="py-2.5 px-3">Samples</th>
+                <th class="py-2.5 px-3">Min</th>
+                <th class="py-2.5 px-3">Mean ± StdDev</th>
+                <th class="py-2.5 px-3">P50 (Median)</th>
+                <th class="py-2.5 px-3">P75</th>
+                <th class="py-2.5 px-3">P90</th>
+                <th class="py-2.5 px-3 text-amber-400 font-bold">P95</th>
+                <th class="py-2.5 px-3 text-red-400 font-bold">P99</th>
+                <th class="py-2.5 px-3">Max</th>
+              </tr>
+            </thead>
+            <tbody id="aimbot-stats-tbody" class="divide-y divide-[#30363d]">
+              <tr><td colspan="10" class="py-4 text-center text-gray-500">Loading metrics...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Weapons Breakdown -->
+      <div class="card p-5">
+        <h3 class="text-sm font-bold text-white mb-4">Top Weapons Analyzed</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left text-gray-300">
+            <thead class="text-gray-400 bg-[#0d1117] uppercase border-b border-[#30363d]">
+              <tr>
+                <th class="py-2.5 px-4">Weapon</th>
+                <th class="py-2.5 px-3">Shots</th>
+                <th class="py-2.5 px-3">Hits</th>
+                <th class="py-2.5 px-3">Hit Rate</th>
+                <th class="py-2.5 px-3">P50 Snap</th>
+                <th class="py-2.5 px-3">P95 Snap</th>
+                <th class="py-2.5 px-3">P99 Snap</th>
+              </tr>
+            </thead>
+            <tbody id="weapons-tbody" class="divide-y divide-[#30363d]">
+              <tr><td colspan="7" class="py-4 text-center text-gray-500">Loading weapons...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: TRIGGERBOT -->
+    <div id="tab-triggerbot" class="hidden space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Reaction Histogram -->
+        <div class="card p-5">
+          <h3 class="text-sm font-bold text-white mb-2 flex items-center justify-between">
+            <span>Human Reaction Time (ms) Histogram</span>
+            <span class="text-xs text-gray-400">Aim touch to +attack</span>
+          </h3>
+          <div class="h-64">
+            <canvas id="chartReaction"></canvas>
+          </div>
+        </div>
+
+        <!-- Mode Comparison -->
+        <div class="card p-5">
+          <h3 class="text-sm font-bold text-white mb-4">Contact Mode Breakdown</h3>
+          <div class="space-y-4">
+            <div class="bg-[#0d1117] p-4 rounded-lg border border-[#30363d]">
+              <div class="flex items-center justify-between text-xs font-semibold mb-1">
+                <span class="text-amber-400"><i class="fa-solid fa-arrows-to-eye"></i> TargetDriven (Held Angle / Enemy Crosses)</span>
+                <span id="trig-target-count" class="text-gray-400">0 samples</span>
+              </div>
+              <div id="trig-target-stats" class="text-xs text-gray-300 mt-2">P50: -- ms | P90: -- ms | Min: -- ms</div>
+            </div>
+
+            <div class="bg-[#0d1117] p-4 rounded-lg border border-[#30363d]">
+              <div class="flex items-center justify-between text-xs font-semibold mb-1">
+                <span class="text-blue-400"><i class="fa-solid fa-hand-pointer"></i> AimDriven (Crosshair Flicked Onto Target)</span>
+                <span id="trig-aim-count" class="text-gray-400">0 samples</span>
+              </div>
+              <div id="trig-aim-stats" class="text-xs text-gray-300 mt-2">P50: -- ms | P90: -- ms | Min: -- ms</div>
+            </div>
+
+            <div class="bg-[#0d1117] p-4 rounded-lg border border-[#30363d]">
+              <div class="flex items-center justify-between text-xs font-semibold mb-1">
+                <span class="text-gray-300"><i class="fa-solid fa-smog"></i> Smoke Occluded Reactions</span>
+                <span id="trig-smoke-count" class="text-gray-400">0 samples</span>
+              </div>
+              <p class="text-xs text-gray-400 mt-1">Shots fired while line-of-sight touched active smoke grenade particles.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: AIMLOCK -->
+    <div id="tab-aimlock" class="hidden space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Lock Duration Chart -->
+        <div class="card p-5">
+          <h3 class="text-sm font-bold text-white mb-2 flex items-center justify-between">
+            <span>Tracking Duration (s) Histogram</span>
+            <span class="text-xs text-gray-400">Continuous on-target tracking</span>
+          </h3>
+          <div class="h-64">
+            <canvas id="chartAimlock"></canvas>
+          </div>
+        </div>
+
+        <!-- Lock Stats Summary -->
+        <div class="card p-5">
+          <h3 class="text-sm font-bold text-white mb-4">Aimlock Metrics Summary</h3>
+          <div class="space-y-4">
+            <div class="bg-[#0d1117] p-4 rounded-lg border border-[#30363d]">
+              <div class="text-xs text-gray-400 font-semibold mb-1">TRACKING DURATION (SECONDS)</div>
+              <div id="lock-duration-stats" class="text-xs text-gray-200 mt-1">Mean: -- | P50: -- | P90: -- | P95: -- | P99: -- | Max: --</div>
+            </div>
+
+            <div class="bg-[#0d1117] p-4 rounded-lg border border-[#30363d]">
+              <div class="text-xs text-gray-400 font-semibold mb-1">TARGET DISPLACEMENT (DEGREES)</div>
+              <div id="lock-disp-stats" class="text-xs text-gray-200 mt-1">Mean: -- | P50: -- | P90: -- | P95: -- | P99: -- | Max: --</div>
+            </div>
+
+            <div class="bg-[#0d1117] p-4 rounded-lg border border-[#30363d]">
+              <div class="text-xs text-gray-400 font-semibold mb-1">ON-TARGET RATIO (%)</div>
+              <div id="lock-ratio-stats" class="text-xs text-gray-200 mt-1">Mean: -- | P50: -- | P90: -- | P99: --</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Database Config Modal -->
+  <div id="config-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-[#161b22] border border-[#30363d] rounded-xl max-w-md w-full p-6 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#30363d] pb-3 mb-4">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <i class="fa-solid fa-database text-indigo-400"></i> MariaDB Connection
+        </h3>
+        <button onclick="closeConfigModal()" class="text-gray-400 hover:text-white">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <form id="db-config-form" onsubmit="saveDbConfig(event)" class="space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Host / Server IP</label>
+          <input type="text" id="cfg-host" required class="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Port</label>
+            <input type="number" id="cfg-port" required value="3306" class="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Database Name</label>
+            <input type="text" id="cfg-db" required class="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Username</label>
+          <input type="text" id="cfg-user" required class="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Password</label>
+          <input type="password" id="cfg-pass" placeholder="(Leave blank to keep unchanged)" class="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <div id="cfg-alert" class="text-xs hidden p-2.5 rounded-lg"></div>
+
+        <div class="flex justify-end space-x-2 pt-2 border-t border-[#30363d]">
+          <button type="button" onclick="testConnection()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 px-3 py-2 rounded-lg text-xs font-medium">
+            Test Connection
+          </button>
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-medium shadow-md shadow-indigo-600/30">
+            Save & Connect
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-xl text-xs font-semibold flex items-center gap-2 transform translate-y-20 opacity-0 transition-all duration-300 z-50">
+    <i class="fa-solid fa-circle-check text-base"></i>
+    <span id="toast-msg">Report copied to clipboard!</span>
+  </div>
+
+  <!-- Dashboard JavaScript Logic -->
+  <script>
+    let currentMarkdown = "";
+    let snapChart = null;
+    let effChart = null;
+    let reactionChart = null;
+    let aimlockChart = null;
+
+    async function checkStatus() {
+      try {
+        const res = await fetch('/api/test');
+        const data = await res.json();
+        const dot = document.getElementById('db-dot');
+        const text = document.getElementById('db-text');
+
+        if (data.success) {
+          dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+          text.textContent = `Connected (${data.sessionsCount} sessions)`;
+          text.className = "text-emerald-400 font-medium";
+        } else {
+          dot.className = "w-2.5 h-2.5 rounded-full bg-red-400";
+          text.textContent = "DB Error";
+          text.className = "text-red-400 font-medium";
+        }
+      } catch (err) {
+        document.getElementById('db-dot').className = "w-2.5 h-2.5 rounded-full bg-red-400";
+        document.getElementById('db-text').textContent = "Server Offline";
+      }
+    }
+
+    async function loadSummary() {
+      try {
+        const res = await fetch('/api/summary');
+        const data = await res.json();
+        if (!data.success) return;
+
+        document.getElementById('kpi-sessions').textContent = data.sessions.total.toLocaleString();
+        document.getElementById('kpi-sessions-sub').textContent = `${data.sessions.servers} servers | ${data.sessions.maps} maps`;
+
+        document.getElementById('kpi-shots').textContent = data.aimbot.totalShots.toLocaleString();
+        document.getElementById('kpi-hitrate').textContent = `(${data.aimbot.hitRate.toFixed(1)}% hit)`;
+        document.getElementById('kpi-shots-sub').textContent = `${data.aimbot.distinctPlayers} unique players`;
+
+        document.getElementById('kpi-reactions').textContent = data.triggerbot.totalReactions.toLocaleString();
+        document.getElementById('kpi-reactions-sub').textContent = `${data.triggerbot.targetDriven} target | ${data.triggerbot.aimDriven} aim`;
+
+        document.getElementById('kpi-locks').textContent = data.aimlock.totalEpisodes.toLocaleString();
+        document.getElementById('kpi-locks-sub').textContent = `Avg: ${data.aimlock.avgDuration.toFixed(2)}s (Max: ${data.aimlock.maxDuration.toFixed(2)}s)`;
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadAimbot() {
+      try {
+        const res = await fetch('/api/aimbot');
+        const data = await res.json();
+        if (!data.success) return;
+
+        // Populate Table
+        const tbody = document.getElementById('aimbot-stats-tbody');
+        tbody.innerHTML = '';
+
+        function renderRow(name, s, unit, isPct = false) {
+          if (!s) return;
+          const tr = document.createElement('tr');
+          const mult = isPct ? 100 : 1;
+          const fmt = (v) => isPct ? `${(v * 100).toFixed(1)}%` : `${v.toFixed(2)}${unit}`;
+          tr.innerHTML = `
+            <td class="py-2.5 px-4 font-semibold text-white">${name}</td>
+            <td class="py-2.5 px-3">${s.sampleCount}</td>
+            <td class="py-2.5 px-3">${fmt(s.min)}</td>
+            <td class="py-2.5 px-3">${fmt(s.mean)} ± ${fmt(s.standardDeviation)}</td>
+            <td class="py-2.5 px-3 font-semibold text-indigo-300">${fmt(s.p50)}</td>
+            <td class="py-2.5 px-3">${fmt(s.p75)}</td>
+            <td class="py-2.5 px-3">${fmt(s.p90)}</td>
+            <td class="py-2.5 px-3 text-amber-400 font-bold">${fmt(s.p95)}</td>
+            <td class="py-2.5 px-3 text-red-400 font-bold">${fmt(s.p99)}</td>
+            <td class="py-2.5 px-3">${fmt(s.max)}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+
+        renderRow("Snap Angle (°)", data.snap, "°");
+        renderRow("Path Efficiency", data.pathEfficiency, "", true);
+        renderRow("Angular Velocity (°/s)", data.angularVelocity, "°/s");
+        renderRow("Error Reduction", data.errorReduction, "", true);
+        renderRow("Monotonic Steps", data.monotonicSteps, "");
+
+        // Render Weapons Table
+        const wbody = document.getElementById('weapons-tbody');
+        wbody.innerHTML = '';
+        data.weapons.forEach(w => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class="py-2 px-4 font-semibold text-white">${w.weapon}</td>
+            <td class="py-2 px-3">${w.count}</td>
+            <td class="py-2 px-3">${w.hits}</td>
+            <td class="py-2 px-3 text-emerald-400 font-medium">${w.hitRate.toFixed(1)}%</td>
+            <td class="py-2 px-3">${w.p50Snap.toFixed(2)}°</td>
+            <td class="py-2 px-3 text-amber-400">${w.p95Snap.toFixed(2)}°</td>
+            <td class="py-2 px-3 text-red-400 font-semibold">${w.p99Snap.toFixed(2)}°</td>
+          `;
+          wbody.appendChild(tr);
+        });
+
+        // Charts
+        renderSnapChart(data.snapHistogram);
+        renderEffChart(data.effHistogram);
+      } catch (e) { console.error(e); }
+    }
+
+    function renderSnapChart(hist) {
+      const ctx = document.getElementById('chartSnap').getContext('2d');
+      if (snapChart) snapChart.destroy();
+      snapChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(hist),
+          datasets: [{
+            label: 'Shots',
+            data: Object.values(hist),
+            backgroundColor: '#6366f1',
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+            y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    function renderEffChart(hist) {
+      const ctx = document.getElementById('chartEff').getContext('2d');
+      if (effChart) effChart.destroy();
+      effChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(hist),
+          datasets: [{
+            label: 'Shots',
+            data: Object.values(hist),
+            backgroundColor: '#10b981',
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+            y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    async function loadTriggerbot() {
+      try {
+        const res = await fetch('/api/triggerbot');
+        const data = await res.json();
+        if (!data.success) return;
+
+        if (data.targetDriven) {
+          document.getElementById('trig-target-count').textContent = `${data.targetDriven.sampleCount} samples`;
+          document.getElementById('trig-target-stats').textContent = `Min: ${data.targetDriven.min.toFixed(1)}ms | P50: ${data.targetDriven.p50.toFixed(1)}ms | P90: ${data.targetDriven.p90.toFixed(1)}ms | P99: ${data.targetDriven.p99.toFixed(1)}ms`;
+        }
+
+        if (data.aimDriven) {
+          document.getElementById('trig-aim-count').textContent = `${data.aimDriven.sampleCount} samples`;
+          document.getElementById('trig-aim-stats').textContent = `Min: ${data.aimDriven.min.toFixed(1)}ms | P50: ${data.aimDriven.p50.toFixed(1)}ms | P90: ${data.aimDriven.p90.toFixed(1)}ms | P99: ${data.aimDriven.p99.toFixed(1)}ms`;
+        }
+
+        if (data.smoke) {
+          document.getElementById('trig-smoke-count').textContent = `${data.smoke.sampleCount} samples`;
+        }
+
+        // Chart
+        const ctx = document.getElementById('chartReaction').getContext('2d');
+        if (reactionChart) reactionChart.destroy();
+        reactionChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: Object.keys(data.histogram),
+            datasets: [{
+              label: 'Reactions',
+              data: Object.values(data.histogram),
+              backgroundColor: '#f59e0b',
+              borderRadius: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+              y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+            }
+          }
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadAimlock() {
+      try {
+        const res = await fetch('/api/aimlock');
+        const data = await res.json();
+        if (!data.success) return;
+
+        if (data.duration) {
+          document.getElementById('lock-duration-stats').textContent = 
+            `Min: ${data.duration.min.toFixed(2)}s | P50: ${data.duration.p50.toFixed(2)}s | P90: ${data.duration.p90.toFixed(2)}s | P95: ${data.duration.p95.toFixed(2)}s | P99: ${data.duration.p99.toFixed(2)}s | Max: ${data.duration.max.toFixed(2)}s`;
+        }
+
+        if (data.displacement) {
+          document.getElementById('lock-disp-stats').textContent = 
+            `P50: ${data.displacement.p50.toFixed(1)}° | P90: ${data.displacement.p90.toFixed(1)}° | P99: ${data.displacement.p99.toFixed(1)}° | Max: ${data.displacement.max.toFixed(1)}°`;
+        }
+
+        if (data.onTargetRatio) {
+          document.getElementById('lock-ratio-stats').textContent = 
+            `P50: ${(data.onTargetRatio.p50 * 100).toFixed(1)}% | P90: ${(data.onTargetRatio.p90 * 100).toFixed(1)}% | P99: ${(data.onTargetRatio.p99 * 100).toFixed(1)}%`;
+        }
+
+        // Chart
+        const ctx = document.getElementById('chartAimlock').getContext('2d');
+        if (aimlockChart) aimlockChart.destroy();
+        aimlockChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: Object.keys(data.durationHistogram),
+            datasets: [{
+              label: 'Episodes',
+              data: Object.values(data.durationHistogram),
+              backgroundColor: '#a855f7',
+              borderRadius: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+              y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+            }
+          }
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadCalibration() {
+      try {
+        const res = await fetch('/api/calibration-report');
+        const data = await res.json();
+        if (!data.success) return;
+
+        currentMarkdown = data.markdown;
+        document.getElementById('raw-markdown-preview').textContent = data.markdown;
+
+        if (data.recommendations) {
+          document.getElementById('rec-snap').textContent = `${data.recommendations.snapThreshold.toFixed(1)}°`;
+          document.getElementById('rec-reaction').textContent = `${data.recommendations.reactionMs.toFixed(1)} ms`;
+          document.getElementById('rec-lock').textContent = `${data.recommendations.lockDuration.toFixed(2)} s`;
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function switchTab(tabId) {
+      ['overview', 'aimbot', 'triggerbot', 'aimlock'].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.add('hidden');
+        const btn = document.getElementById(`tab-btn-${t}`);
+        btn.className = "pb-3 text-sm font-semibold text-gray-400 hover:text-gray-200 border-b-2 border-transparent flex items-center gap-2";
+      });
+
+      document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+      const activeBtn = document.getElementById(`tab-btn-${tabId}`);
+      activeBtn.className = "pb-3 text-sm font-semibold text-indigo-400 border-b-2 border-indigo-500 flex items-center gap-2";
+    }
+
+    function copyGeneratedMarkdown() {
+      if (!currentMarkdown) return;
+      navigator.clipboard.writeText(currentMarkdown);
+      showToast("Report copied! You can paste it into the chat.");
+    }
+
+    function exportReport() {
+      copyGeneratedMarkdown();
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-msg').textContent = msg;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 3500);
+    }
+
+    async function refreshAll() {
+      const icon = document.getElementById('refresh-icon');
+      icon.classList.add('fa-spin');
+      await checkStatus();
+      await loadSummary();
+      await loadCalibration();
+      await loadAimbot();
+      await loadTriggerbot();
+      await loadAimlock();
+      setTimeout(() => icon.classList.remove('fa-spin'), 600);
+    }
+
+    // Modal logic
+    async function openConfigModal() {
+      try {
+        const res = await fetch('/api/config');
+        const cfg = await res.json();
+        document.getElementById('cfg-host').value = cfg.host;
+        document.getElementById('cfg-port').value = cfg.port;
+        document.getElementById('cfg-db').value = cfg.database;
+        document.getElementById('cfg-user').value = cfg.user;
+        document.getElementById('cfg-pass').value = '';
+        document.getElementById('cfg-alert').className = "text-xs hidden p-2.5 rounded-lg";
+        document.getElementById('config-modal').classList.remove('hidden');
+      } catch (e) { console.error(e); }
+    }
+
+    function closeConfigModal() {
+      document.getElementById('config-modal').classList.add('hidden');
+    }
+
+    async function testConnection() {
+      const alertBox = document.getElementById('cfg-alert');
+      alertBox.textContent = "Testing connection...";
+      alertBox.className = "text-xs block p-2.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700";
+
+      const host = document.getElementById('cfg-host').value;
+      const port = parseInt(document.getElementById('cfg-port').value);
+      const db = document.getElementById('cfg-db').value;
+      const user = document.getElementById('cfg-user').value;
+      const pass = document.getElementById('cfg-pass').value;
+
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host, port, database: db, user, password: pass })
+        });
+
+        const testRes = await fetch('/api/test');
+        const testData = await testRes.json();
+        if (testData.success) {
+          alertBox.textContent = `Success! ${testData.message}`;
+          alertBox.className = "text-xs block p-2.5 rounded-lg bg-emerald-950 text-emerald-400 border border-emerald-800";
+        } else {
+          alertBox.textContent = `Failed: ${testData.message}`;
+          alertBox.className = "text-xs block p-2.5 rounded-lg bg-red-950 text-red-400 border border-red-800";
+        }
+      } catch (e) {
+        alertBox.textContent = "Error testing connection.";
+        alertBox.className = "text-xs block p-2.5 rounded-lg bg-red-950 text-red-400 border border-red-800";
+      }
+    }
+
+    async function saveDbConfig(e) {
+      e.preventDefault();
+      await testConnection();
+      closeConfigModal();
+      refreshAll();
+    }
+
+    // Init
+    window.addEventListener('DOMContentLoaded', () => {
+      refreshAll();
+    });
+  </script>
+</body>
+</html>
