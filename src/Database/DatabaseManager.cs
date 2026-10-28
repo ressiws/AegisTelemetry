@@ -72,6 +72,7 @@ public sealed class DatabaseManager : IAsyncDisposable
             `actual_hitgroup` SMALLINT NOT NULL DEFAULT 0,
             `damage_dealt` SMALLINT NOT NULL DEFAULT 0,
             INDEX `idx_aimbot_session` (`session_id`),
+            INDEX `idx_aimbot_player` (`player_hash`),
             INDEX `idx_aimbot_weapon` (`weapon`),
             INDEX `idx_aimbot_hit_snap` (`hit_confirmed`, `snap_angle`),
             CONSTRAINT `fk_aimbot_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE
@@ -95,6 +96,7 @@ public sealed class DatabaseManager : IAsyncDisposable
             `actual_hitgroup` SMALLINT NOT NULL DEFAULT 0,
             `smoke_occluded` BOOLEAN NOT NULL DEFAULT FALSE,
             INDEX `idx_trigger_session` (`session_id`),
+            INDEX `idx_trigger_player` (`player_hash`),
             INDEX `idx_trigger_reaction` (`reaction_ms`),
             INDEX `idx_trigger_weapon_speed` (`weapon`, `attacker_speed`),
             CONSTRAINT `fk_trigger_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE
@@ -114,6 +116,7 @@ public sealed class DatabaseManager : IAsyncDisposable
             `avg_distance` FLOAT NOT NULL,
             `completed_normally` BOOLEAN NOT NULL,
             INDEX `idx_aimlock_session` (`session_id`),
+            INDEX `idx_aimlock_player` (`player_hash`),
             INDEX `idx_aimlock_duration` (`duration_seconds`),
             INDEX `idx_aimlock_displacement` (`target_displacement`),
             CONSTRAINT `fk_aimlock_session` FOREIGN KEY (`session_id`) REFERENCES `telemetry_sessions` (`id`) ON DELETE CASCADE

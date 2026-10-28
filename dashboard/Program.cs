@@ -495,43 +495,112 @@ app.MapGet("/api/aimlock", async () =>
     }
 });
 
-app.MapGet("/api/calibration-report", async () =>
+app.MapGet("/api/calibration-report", async ([FromQuery] bool excludeOutliers = true) =>
 {
     try
     {
         await using var conn = new MySqlConnection(BuildConnectionString(dbConfig));
         await conn.OpenAsync();
 
+        // 0. Detect Outlier Cheaters (identify players with superhuman / rage distributions)
+        var suspectHashes = new HashSet<string>();
+        var suspectDetails = new List<string>();
+
+        if (excludeOutliers)
+        {
+            // Suspect Aimbot: players with >= 15 shots where > 15% of shots have snap_angle > 26.0°
+            const string suspectAimSql = @"
+                SELECT player_hash, COUNT(*) as total_shots,
+                       SUM(CASE WHEN snap_angle > 26.0 THEN 1 ELSE 0 END) as high_snaps,
+                       MAX(snap_angle) as max_snap
+                FROM `telemetry_aimbot_shots`
+                GROUP BY player_hash
+                HAVING total_shots >= 15 AND (high_snaps / total_shots) > 0.15;";
+
+            await using (var cmd = new MySqlCommand(suspectAimSql, conn))
+            await using (var r = await cmd.ExecuteReaderAsync())
+            {
+                while (await r.ReadAsync())
+                {
+                    string hash = r.GetString(0);
+                    int total = r.GetInt32(1);
+                    int high = r.GetInt32(2);
+                    float maxSnap = r.GetFloat(3);
+                    float ratio = (float)high / total * 100f;
+                    suspectHashes.Add(hash);
+                    string shortHash = hash.Length >= 8 ? hash[..8] : hash;
+                    suspectDetails.Add($"Player `{shortHash}...`: {high}/{total} ({ratio:F1}%) shots with snap > 26° (max: {maxSnap:F1}°) - [Suspect Aimbot]");
+                }
+            }
+
+            // Suspect Triggerbot: players with >= 10 target-driven reactions where avg reaction < 75ms
+            const string suspectTrigSql = @"
+                SELECT player_hash, COUNT(*) as total_reacts, AVG(reaction_ms) as avg_react, MIN(reaction_ms) as min_react
+                FROM `telemetry_triggerbot_reactions`
+                WHERE contact_mode = 'TargetDriven' AND prior_clicks = 0
+                GROUP BY player_hash
+                HAVING total_reacts >= 10 AND avg_react < 75.0;";
+
+            await using (var cmd = new MySqlCommand(suspectTrigSql, conn))
+            await using (var r = await cmd.ExecuteReaderAsync())
+            {
+                while (await r.ReadAsync())
+                {
+                    string hash = r.GetString(0);
+                    int total = r.GetInt32(1);
+                    float avgR = r.GetFloat(2);
+                    float minR = r.GetFloat(3);
+                    suspectHashes.Add(hash);
+                    string shortHash = hash.Length >= 8 ? hash[..8] : hash;
+                    suspectDetails.Add($"Player `{shortHash}...`: Avg reaction {avgR:F1}ms (min: {minR:F1}ms across {total} samples) - [Suspect Triggerbot]");
+                }
+            }
+        }
+
         // 1. Aimbot Shots
         var snapList = new List<float>();
         var effList = new List<float>();
-        await using (var cmd = new MySqlCommand("SELECT snap_angle, path_efficiency FROM `telemetry_aimbot_shots`;", conn))
+        await using (var cmd = new MySqlCommand("SELECT snap_angle, path_efficiency, player_hash FROM `telemetry_aimbot_shots`;", conn))
         await using (var r = await cmd.ExecuteReaderAsync())
         {
             while (await r.ReadAsync())
             {
+                string hash = r.GetString(2);
+                if (excludeOutliers && suspectHashes.Contains(hash))
+                    continue;
+
                 snapList.Add(r.GetFloat(0));
                 effList.Add(r.GetFloat(1));
             }
         }
 
-        // 2. Triggerbot
+        // 2. Triggerbot (only TargetDriven with prior_clicks == 0 represents genuine human reaction time!)
         var reactList = new List<float>();
-        await using (var cmd = new MySqlCommand("SELECT reaction_ms FROM `telemetry_triggerbot_reactions`;", conn))
+        await using (var cmd = new MySqlCommand("SELECT reaction_ms, player_hash FROM `telemetry_triggerbot_reactions` WHERE contact_mode = 'TargetDriven' AND prior_clicks = 0;", conn))
         await using (var r = await cmd.ExecuteReaderAsync())
         {
             while (await r.ReadAsync())
+            {
+                string hash = r.GetString(1);
+                if (excludeOutliers && suspectHashes.Contains(hash))
+                    continue;
+
                 reactList.Add(r.GetFloat(0));
+            }
         }
 
         // 3. Aimlock
         var lockList = new List<float>();
         var dispList = new List<float>();
-        await using (var cmd = new MySqlCommand("SELECT duration_seconds, target_displacement FROM `telemetry_aimlock_episodes`;", conn))
+        await using (var cmd = new MySqlCommand("SELECT duration_seconds, target_displacement, player_hash FROM `telemetry_aimlock_episodes`;", conn))
         await using (var r = await cmd.ExecuteReaderAsync())
         {
             while (await r.ReadAsync())
             {
+                string hash = r.GetString(2);
+                if (excludeOutliers && suspectHashes.Contains(hash))
+                    continue;
+
                 lockList.Add(r.GetFloat(0));
                 dispList.Add(r.GetFloat(1));
             }
@@ -547,15 +616,25 @@ app.MapGet("/api/calibration-report", async () =>
         float suggestedSnapThreshold = snapStats != null ? MathF.Max(20.0f, snapStats.P99 * 1.25f) : 22.0f;
         float suggestedMinSmoothMovement = snapStats != null ? MathF.Max(12.0f, snapStats.P95 * 1.3f) : 13.0f;
         float suggestedSmoothEfficiency = effStats != null ? MathF.Min(0.96f, MathF.Max(0.92f, effStats.P99 * 0.98f)) : 0.94f;
-        float suggestedReactionMs = reactStats != null && reactStats.SampleCount >= 5 ? MathF.Max(90.0f, reactStats.Min * 0.75f) : 120.0f;
+        float suggestedReactionMs = reactStats != null && reactStats.SampleCount >= 5 ? MathF.Max(90.0f, reactStats.Min * 0.85f) : 100.0f;
         float suggestedLockDuration = lockStats != null ? MathF.Max(1.6f, lockStats.P99 * 1.35f) : 2.0f;
 
         var sb = new StringBuilder();
         sb.AppendLine("# 🛡️ AegisAC Calibration Report");
         sb.AppendLine($"*Generated at: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC*\n");
-        sb.AppendLine("## 📊 Summary of Collected Live Telemetry");
+
+        if (suspectDetails.Count > 0)
+        {
+            sb.AppendLine("## ⚠️ Detected Outliers / Suspect Cheaters (Quarantined)");
+            sb.AppendLine($"*Found {suspectDetails.Count} player profiles with anomalous superhuman metrics:*");
+            foreach (var detail in suspectDetails)
+                sb.AppendLine($"- {detail}");
+            sb.AppendLine("\n> **Protection Active**: These players were automatically excluded from the baseline calculations below so their abnormal data does NOT pollute the calibrated thresholds!\n");
+        }
+
+        sb.AppendLine("## 📊 Summary of Collected Live Telemetry (Legitimate Baseline)");
         sb.AppendLine($"- **Aimbot Shots Sampled**: {snapList.Count:N0}");
-        sb.AppendLine($"- **Triggerbot Reactions Sampled**: {reactList.Count:N0}");
+        sb.AppendLine($"- **Triggerbot Reactions Sampled**: {reactList.Count:N0} (Target-Driven, First Click)");
         sb.AppendLine($"- **Aimlock Tracking Episodes**: {lockList.Count:N0}\n");
 
         sb.AppendLine("## 🎯 1. Aimbot Calibrations");
