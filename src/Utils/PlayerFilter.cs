@@ -30,6 +30,7 @@ public static class PlayerFilter
 
     /// <summary>
     /// Checks if the player is an eligible human combatant (alive, non-bot, active team, valid pawn).
+    /// Strictly used for the player whose aim/actions are being measured.
     /// </summary>
     public static bool IsEligibleCombatant(IPlayer? player)
     {
@@ -51,14 +52,37 @@ public static class PlayerFilter
     }
 
     /// <summary>
-    /// Checks if two players are valid human opponents.
+    /// Checks if a player/bot is a valid combat target (alive, valid pawn, active playing team).
+    /// Target can be human or bot, but cannot be dead or spectator.
+    /// </summary>
+    public static bool IsValidTarget(IPlayer? player)
+    {
+        if (player is null || !player.IsValid)
+            return false;
+
+        if (!player.IsAlive)
+            return false;
+
+        var pawn = player.PlayerPawn;
+        if (pawn is null || !pawn.IsValid)
+            return false;
+
+        if (pawn.LifeState != 0)
+            return false;
+
+        int team = pawn.TeamNum;
+        return team == 2 || team == 3; // 2: T, 3: CT
+    }
+
+    /// <summary>
+    /// Checks if attacker is an eligible human combatant and victim is an alive enemy target (human or bot).
     /// </summary>
     public static bool AreEnemies(IPlayer? attacker, IPlayer? victim)
     {
         if (attacker is null || victim is null || attacker.PlayerID == victim.PlayerID)
             return false;
 
-        if (!IsEligibleCombatant(attacker) || !IsEligibleCombatant(victim))
+        if (!IsEligibleCombatant(attacker) || !IsValidTarget(victim))
             return false;
 
         var pA = attacker.PlayerPawn;

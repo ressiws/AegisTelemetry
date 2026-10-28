@@ -243,7 +243,7 @@ public sealed class AimlockTelemetry
             int targetId = data.Track.TargetIndex;
             var target = _getPlayer(targetId);
 
-            if (!PlayerFilter.IsEligibleCombatant(target) || !PlayerFilter.AreEnemies(player, target))
+            if (!PlayerFilter.IsValidTarget(target) || !PlayerFilter.AreEnemies(player, target))
             {
                 EndEpisode(playerId, completedNormally: false);
                 return;
@@ -308,7 +308,7 @@ public sealed class AimlockTelemetry
                 continue;
 
             var target = _getPlayer(i);
-            if (!PlayerFilter.IsEligibleCombatant(target) || !PlayerFilter.AreEnemies(player, target))
+            if (!PlayerFilter.IsValidTarget(target) || !PlayerFilter.AreEnemies(player, target))
                 continue;
 
             var targetPawn = target!.PlayerPawn;

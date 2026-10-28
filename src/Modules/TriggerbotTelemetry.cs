@@ -397,7 +397,7 @@ public sealed class TriggerbotTelemetry
         for (int i = 0; i < MaxPlayers; i++)
         {
             var target = _getPlayer(i);
-            if (!PlayerFilter.IsEligibleCombatant(target) || target!.PlayerID == player.PlayerID)
+            if (!PlayerFilter.IsValidTarget(target) || target!.PlayerID == player.PlayerID)
                 continue;
 
             if (!PlayerFilter.AreEnemies(player, target))
