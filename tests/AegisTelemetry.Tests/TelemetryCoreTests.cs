@@ -95,4 +95,95 @@ public class TelemetryCoreTests
             }
         }
     }
+
+    [Theory]
+    [InlineData(200.0f, 64.0f, true)]   // Close range aiming directly at Head
+    [InlineData(200.0f, 46.0f, true)]   // Close range aiming directly at Chest
+    [InlineData(200.0f, 8.0f, true)]    // Close range aiming directly at Feet
+    [InlineData(500.0f, 64.0f, true)]   // Medium range aiming at Head
+    [InlineData(1000.0f, 64.0f, true)]  // Long range aiming at Head
+    public void Aimlock_AngularPreFilter_PassesLegitimateTargetingAcrossBodyPoints(float distance, float targetBodyHeight, bool expectedPass)
+    {
+        // Observer eye position at (0, 0, 64)
+        float eyeX = 0.0f, eyeY = 0.0f, eyeZ = 64.0f;
+        // Enemy origin at (distance, 0, 0)
+        float enemyOriginX = distance, enemyOriginY = 0.0f, enemyOriginZ = 0.0f;
+
+        // Player aiming directly at targetBodyHeight (e.g. Head: enemyOriginZ + 64.0f)
+        float targetZ = enemyOriginZ + targetBodyHeight;
+        float aimDx = enemyOriginX - eyeX;
+        float aimDy = enemyOriginY - eyeY;
+        float aimDz = targetZ - eyeZ;
+        float aimLen = MathF.Sqrt(aimDx * aimDx + aimDy * aimDy + aimDz * aimDz);
+        float forwardX = aimDx / aimLen;
+        float forwardY = aimDy / aimLen;
+        float forwardZ = aimDz / aimLen;
+
+        float[] bodyHeights = [8.0f, 46.0f, 64.0f];
+        float minDistSq = 200.0f * 200.0f;
+
+        bool withinCone = false;
+        for (int bp = 0; bp < bodyHeights.Length; bp++)
+        {
+            float bx = enemyOriginX - eyeX;
+            float by = enemyOriginY - eyeY;
+            float bz = (enemyOriginZ + bodyHeights[bp]) - eyeZ;
+            float bDistSq = bx * bx + by * by + bz * bz;
+
+            if (bDistSq < minDistSq - 1.0f)
+                continue;
+
+            float bDot = bx * forwardX + by * forwardY + bz * forwardZ;
+            if (bDot <= 0.0f)
+                continue;
+
+            if (bDot * bDot >= 0.82f * bDistSq) // cos^2(25°) ≈ 0.821
+            {
+                withinCone = true;
+                break;
+            }
+        }
+
+        Assert.Equal(expectedPass, withinCone);
+    }
+
+    [Fact]
+    public void Aimlock_AngularPreFilter_RejectsOffTargetAngles()
+    {
+        float eyeX = 0.0f, eyeY = 0.0f, eyeZ = 64.0f;
+        float enemyOriginX = 500.0f, enemyOriginY = 0.0f, enemyOriginZ = 0.0f;
+
+        // Player aiming 35 degrees away horizontally
+        float rad = 35.0f * (MathF.PI / 180.0f);
+        float forwardX = MathF.Cos(rad);
+        float forwardY = MathF.Sin(rad);
+        float forwardZ = 0.0f;
+
+        float[] bodyHeights = [8.0f, 46.0f, 64.0f];
+        float minDistSq = 200.0f * 200.0f;
+
+        bool withinCone = false;
+        for (int bp = 0; bp < bodyHeights.Length; bp++)
+        {
+            float bx = enemyOriginX - eyeX;
+            float by = enemyOriginY - eyeY;
+            float bz = (enemyOriginZ + bodyHeights[bp]) - eyeZ;
+            float bDistSq = bx * bx + by * by + bz * bz;
+
+            if (bDistSq < minDistSq)
+                continue;
+
+            float bDot = bx * forwardX + by * forwardY + bz * forwardZ;
+            if (bDot <= 0.0f)
+                continue;
+
+            if (bDot * bDot >= 0.82f * bDistSq)
+            {
+                withinCone = true;
+                break;
+            }
+        }
+
+        Assert.False(withinCone, "Pre-filter should have rejected player looking 35 degrees away from target!");
+    }
 }
