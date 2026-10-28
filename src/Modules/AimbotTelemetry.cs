@@ -70,17 +70,19 @@ internal sealed class TelemetryAimbotPlayerState
 {
     public readonly List<TelemetryAimCommand> Commands = new();
     public readonly List<TelemetryShotRecord> Shots = new();
+    public int LastUnhitEvaluatedTick = -1;
 
     public void Reset()
     {
         Commands.Clear();
         Shots.Clear();
+        LastUnhitEvaluatedTick = -1;
     }
 }
 
 public sealed class AimbotTelemetry
 {
-    private const int MaxPlayers = 64;
+    private const int MaxPlayers = 65;
     private const int CommandHistorySize = 128;
     private const int PositionHistoryLimit = 128;
     private const int SnapWindowTicks = 32; // 0.5s at 64-tick
@@ -98,7 +100,7 @@ public sealed class AimbotTelemetry
     private readonly Func<int, IPlayer?> _getPlayer;
     private readonly Action<string> _debug;
 
-    private readonly TelemetryAimbotPlayerState[] _players = new TelemetryAimbotPlayerState[MaxPlayers + 1];
+    private readonly TelemetryAimbotPlayerState[] _players = new TelemetryAimbotPlayerState[MaxPlayers];
     private readonly List<TelemetryPositionFrame> _frames = new();
 
     public AimbotTelemetry(TelemetryConfig config, BoundedChannelWriter queue, TelemetryStatsCalculator stats, Func<int, IPlayer?> getPlayer, Action<string> debug)
@@ -245,6 +247,13 @@ public sealed class AimbotTelemetry
                 if (currentTick - shot.FireTick >= 3)
                 {
                     shot.Evaluated = true;
+
+                    // Throttle continuous unhit sprays (e.g. 150-bullet Negev spray)
+                    // Sample at most 1 unhit shot per 12 ticks (~200ms) per player to preserve server tick rate.
+                    if (st.LastUnhitEvaluatedTick >= 0 && currentTick - st.LastUnhitEvaluatedTick < 12)
+                        continue;
+
+                    st.LastUnhitEvaluatedTick = currentTick;
                     EvaluateShot(p!, st, shot, hitConfirmed: false);
                 }
             }
@@ -358,135 +367,149 @@ public sealed class AimbotTelemetry
 
     private void EvaluateShot(IPlayer attacker, TelemetryAimbotPlayerState st, TelemetryShotRecord shot, bool hitConfirmed)
     {
-        var cmd = shot.Command;
-        if (!cmd.Simulated)
-            return;
-
-        var frame = _frames.Find(f => f.ServerTick == cmd.ServerTick);
-        if (frame == null)
-            return;
-
-        var attackerPos = frame.Players[attacker.PlayerID];
-        if (!attackerPos.Valid)
-            return;
-
-        // Determine target position: if hit, use victim; otherwise, find closest enemy in view
-        int targetId = shot.VictimId;
-        TelemetryTrackedPosition targetPos = default;
-        bool haveTarget = false;
-
-        if (targetId >= 0 && targetId < MaxPlayers && frame.Players[targetId].Valid)
+        try
         {
-            targetPos = frame.Players[targetId];
-            haveTarget = true;
-        }
-        else
-        {
-            float bestAngle = 90.0f;
-            for (int i = 0; i < MaxPlayers; i++)
+            var cmd = shot.Command;
+            if (!cmd.Simulated)
+                return;
+
+            var frame = _frames.Find(f => f.ServerTick == cmd.ServerTick);
+            if (frame == null)
+                return;
+
+            int attackerId = attacker.PlayerID;
+            if (attackerId < 0 || attackerId >= frame.Players.Length)
+                return;
+
+            var attackerPos = frame.Players[attackerId];
+            if (!attackerPos.Valid)
+                return;
+
+            // Determine target position: if hit, use victim; otherwise, find closest enemy in view
+            int targetId = shot.VictimId;
+            TelemetryTrackedPosition targetPos = default;
+            bool haveTarget = false;
+
+            if (targetId >= 0 && targetId < frame.Players.Length && frame.Players[targetId].Valid)
             {
-                if (i == attacker.PlayerID || !frame.Players[i].Valid || !frame.Players[i].Alive)
-                    continue;
-
-                if (frame.Players[i].Team == attackerPos.Team)
-                    continue;
-
-                float err = AimMath.AimError(attackerPos.Eye, cmd.Angles, frame.Players[i].Origin);
-                if (err < bestAngle)
+                targetPos = frame.Players[targetId];
+                haveTarget = true;
+            }
+            else
+            {
+                float bestAngle = 90.0f;
+                for (int i = 0; i < frame.Players.Length; i++)
                 {
-                    bestAngle = err;
-                    targetPos = frame.Players[i];
-                    targetId = i;
-                    haveTarget = true;
+                    if (i == attackerId || !frame.Players[i].Valid || !frame.Players[i].Alive)
+                        continue;
+
+                    if (frame.Players[i].Team == attackerPos.Team)
+                        continue;
+
+                    float err = AimMath.AimError(attackerPos.Eye, cmd.Angles, frame.Players[i].Origin);
+                    if (err < bestAngle)
+                    {
+                        bestAngle = err;
+                        targetPos = frame.Players[i];
+                        targetId = i;
+                        haveTarget = true;
+                    }
                 }
             }
-        }
 
-        if (!haveTarget)
-            return;
+            if (!haveTarget || targetId < 0 || targetId >= frame.Players.Length)
+                return;
 
-        float distance = targetPos.Origin.Distance(attackerPos.Eye);
-        if (distance < 1.0f || !float.IsFinite(distance))
-            return;
+            float distance = targetPos.Origin.Distance(attackerPos.Eye);
+            if (distance < 1.0f || !float.IsFinite(distance))
+                return;
 
-        // Walk backwards through commands in the 0.5s window
-        float largestSnap = 0.0f;
-        float beforeError = 0.0f;
-        float afterError = 0.0f;
-        float totalPath = 0.0f;
-        var stepDistances = new List<float>();
+            // Walk backwards through commands in the 0.5s window
+            float largestSnap = 0.0f;
+            float beforeError = 0.0f;
+            float afterError = 0.0f;
+            float totalPath = 0.0f;
+            var stepDistances = new List<float>();
 
-        var newer = cmd;
-        while (true)
-        {
-            var older = st.Commands.FindLast(c => c.CommandNumber == newer.CommandNumber - 1 && c.Simulated);
-            if (older == null)
-                break;
-
-            if (cmd.ServerTick - older.ServerTick > SnapWindowTicks)
-                break;
-
-            var olderFrame = _frames.Find(f => f.ServerTick == older.ServerTick);
-            if (olderFrame == null || !olderFrame.Players[targetId].Valid || !olderFrame.Players[attacker.PlayerID].Valid)
-                break;
-
-            float stepSnap = AimMath.AngularDistance(older.Angles, newer.Angles);
-            if (!float.IsFinite(stepSnap))
-                break;
-
-            totalPath += stepSnap;
-            stepDistances.Add(stepSnap);
-
-            if (stepSnap > largestSnap)
+            var newer = cmd;
+            int stepCount = 0;
+            while (++stepCount <= SnapWindowTicks)
             {
-                largestSnap = stepSnap;
-                beforeError = AimMath.NearestBodyAimError(olderFrame.Players[attacker.PlayerID].Eye, older.Angles, olderFrame.Players[targetId].Origin);
-                afterError = AimMath.NearestBodyAimError(frame.Players[attacker.PlayerID].Eye, newer.Angles, frame.Players[targetId].Origin);
+                var older = st.Commands.FindLast(c => c.CommandNumber == newer.CommandNumber - 1 && c.Simulated);
+                if (older == null)
+                    break;
+
+                if (cmd.ServerTick - older.ServerTick > SnapWindowTicks)
+                    break;
+
+                var olderFrame = _frames.Find(f => f.ServerTick == older.ServerTick);
+                if (olderFrame == null ||
+                    targetId >= olderFrame.Players.Length || attackerId >= olderFrame.Players.Length ||
+                    !olderFrame.Players[targetId].Valid || !olderFrame.Players[attackerId].Valid)
+                    break;
+
+                float stepSnap = AimMath.AngularDistance(older.Angles, newer.Angles);
+                if (!float.IsFinite(stepSnap))
+                    break;
+
+                totalPath += stepSnap;
+                stepDistances.Add(stepSnap);
+
+                if (stepSnap > largestSnap)
+                {
+                    largestSnap = stepSnap;
+                    beforeError = AimMath.NearestBodyAimError(olderFrame.Players[attackerId].Eye, older.Angles, olderFrame.Players[targetId].Origin);
+                    afterError = AimMath.NearestBodyAimError(frame.Players[attackerId].Eye, newer.Angles, frame.Players[targetId].Origin);
+                }
+
+                newer = older;
             }
 
-            newer = older;
-        }
+            float angularVelocity = largestSnap * 64.0f; // degrees/sec
+            float directMovement = stepDistances.Count > 0 ? AimMath.AngularDistance(newer.Angles, cmd.Angles) : largestSnap;
+            float pathEfficiency = totalPath > AimMath.Epsilon ? Math.Clamp(directMovement / totalPath, 0.0f, 1.0f) : 1.0f;
+            float errorReduction = beforeError > AimMath.Epsilon ? Math.Clamp(1.0f - (afterError / beforeError), 0.0f, 1.0f) : 0.0f;
 
-        float angularVelocity = largestSnap * 64.0f; // degrees/sec
-        float directMovement = stepDistances.Count > 0 ? AimMath.AngularDistance(newer.Angles, cmd.Angles) : largestSnap;
-        float pathEfficiency = totalPath > AimMath.Epsilon ? Math.Clamp(directMovement / totalPath, 0.0f, 1.0f) : 1.0f;
-        float errorReduction = beforeError > AimMath.Epsilon ? Math.Clamp(1.0f - (afterError / beforeError), 0.0f, 1.0f) : 0.0f;
-
-        // Count monotonic decelerating steps
-        short monotonicSteps = 0;
-        float prev = float.PositiveInfinity;
-        for (int i = 0; i < stepDistances.Count; i++)
-        {
-            if (stepDistances[i] < prev)
+            // Count monotonic decelerating steps
+            short monotonicSteps = 0;
+            float prev = float.PositiveInfinity;
+            for (int i = 0; i < stepDistances.Count; i++)
             {
-                monotonicSteps++;
-                prev = stepDistances[i];
+                if (stepDistances[i] < prev)
+                {
+                    monotonicSteps++;
+                    prev = stepDistances[i];
+                }
+                else break;
             }
-            else break;
+
+            string playerHash = Pseudonymizer.HashSteamId(attacker.SteamID, _config.PseudonymizationSalt);
+
+            var record = new AimbotShotRecord
+            {
+                TimestampUtc = DateTime.UtcNow,
+                ServerTick = cmd.ServerTick,
+                CommandNumber = cmd.CommandNumber,
+                PlayerHash = playerHash,
+                Weapon = shot.Weapon,
+                TargetDistance = distance,
+                SnapAngle = largestSnap,
+                AngularVelocity = angularVelocity,
+                ErrorReduction = errorReduction,
+                PathEfficiency = pathEfficiency,
+                MonotonicSteps = monotonicSteps,
+                HitConfirmed = hitConfirmed,
+                ActualHitGroup = shot.ActualHitGroup,
+                DamageDealt = shot.DamageDealt
+            };
+
+            _stats.RecordSnapAngle(record.SnapAngle);
+            _stats.RecordPathEfficiency(record.PathEfficiency);
+            _queue.Enqueue(record);
         }
-
-        string playerHash = Pseudonymizer.HashSteamId(attacker.SteamID, _config.PseudonymizationSalt);
-
-        var record = new AimbotShotRecord
+        catch (Exception ex)
         {
-            TimestampUtc = DateTime.UtcNow,
-            ServerTick = cmd.ServerTick,
-            CommandNumber = cmd.CommandNumber,
-            PlayerHash = playerHash,
-            Weapon = shot.Weapon,
-            TargetDistance = distance,
-            SnapAngle = largestSnap,
-            AngularVelocity = angularVelocity,
-            ErrorReduction = errorReduction,
-            PathEfficiency = pathEfficiency,
-            MonotonicSteps = monotonicSteps,
-            HitConfirmed = hitConfirmed,
-            ActualHitGroup = shot.ActualHitGroup,
-            DamageDealt = shot.DamageDealt
-        };
-
-        _stats.RecordSnapAngle(record.SnapAngle);
-        _stats.RecordPathEfficiency(record.PathEfficiency);
-        _queue.Enqueue(record);
+            _debug($"[AimbotTelemetry] EvaluateShot error: {ex.Message}");
+        }
     }
 }

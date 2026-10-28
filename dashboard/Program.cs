@@ -52,9 +52,10 @@ DbConfig LoadDbConfig(string path, IConfiguration fallback)
 {
     try
     {
-        if (File.Exists(path))
+        string targetPath = File.Exists(path) ? path : Path.Combine(AppContext.BaseDirectory, "appsettings.example.json");
+        if (File.Exists(targetPath))
         {
-            var json = File.ReadAllText(path);
+            var json = File.ReadAllText(targetPath);
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("Database", out var dbProp))
             {

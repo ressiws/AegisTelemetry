@@ -77,7 +77,7 @@ internal sealed class TelemetryAimlockPlayerData
 
 public sealed class AimlockTelemetry
 {
-    private const int MaxPlayers = 64;
+    private const int MaxPlayers = 65;
     private const float PlayerHalfWidth = 16.0f;
     private const int MinEpisodeTicks = 8; // Ignore noise under 8 ticks (~125ms)
 
@@ -87,7 +87,7 @@ public sealed class AimlockTelemetry
     private readonly Func<int, IPlayer?> _getPlayer;
     private readonly Action<string> _debug;
 
-    private readonly TelemetryAimlockPlayerData[] _players = new TelemetryAimlockPlayerData[MaxPlayers + 1];
+    private readonly TelemetryAimlockPlayerData[] _players = new TelemetryAimlockPlayerData[MaxPlayers];
 
     public AimlockTelemetry(TelemetryConfig config, BoundedChannelWriter queue, TelemetryStatsCalculator stats, Func<int, IPlayer?> getPlayer, Action<string> debug)
     {
@@ -183,7 +183,7 @@ public sealed class AimlockTelemetry
             return;
 
         var pawn = player.PlayerPawn;
-        if (pawn is null)
+        if (pawn is null || !pawn.IsValid)
             return;
 
         Vector origin = pawn.AbsOrigin ?? default;
@@ -234,115 +234,122 @@ public sealed class AimlockTelemetry
 
     private void Evaluate(IPlayer player, TelemetryAimlockPlayerData data, TelemetryAimlockSample sample)
     {
-        int playerId = player.PlayerID;
-        Vector aimForward = AimMath.Forward(sample.Angles);
-
-        // If currently tracking a target, verify continuity
-        if (data.Track.TargetIndex >= 0)
+        try
         {
-            int targetId = data.Track.TargetIndex;
-            var target = _getPlayer(targetId);
+            int playerId = player.PlayerID;
+            Vector aimForward = AimMath.Forward(sample.Angles);
 
-            if (!PlayerFilter.IsValidTarget(target) || !PlayerFilter.AreEnemies(player, target))
+            // If currently tracking a target, verify continuity
+            if (data.Track.TargetIndex >= 0)
             {
-                EndEpisode(playerId, completedNormally: false);
-                return;
-            }
+                int targetId = data.Track.TargetIndex;
+                var target = _getPlayer(targetId);
 
-            var targetPawn = target!.PlayerPawn;
-            Vector targetOrigin = targetPawn?.AbsOrigin ?? default;
-            float dist = sample.EyePosition.Distance(targetOrigin);
-
-            if (!AimMath.IsFinite(targetOrigin) || dist < 1.0f)
-            {
-                EndEpisode(playerId, completedNormally: false);
-                return;
-            }
-
-            // Check if still on target (feet, chest, or head)
-            bool onTarget = false;
-            for (int bp = 0; bp < AimMath.BodyPointCount; bp++)
-            {
-                Vector bpPos = new(targetOrigin.X, targetOrigin.Y, targetOrigin.Z + AimMath.BodyHeight(bp));
-                float err = AimMath.AimError(sample.EyePosition, sample.Angles, bpPos);
-                float maxErr = MathF.Atan2(PlayerHalfWidth, dist) * (180.0f / MathF.PI);
-                if (err <= maxErr)
+                if (!PlayerFilter.IsValidTarget(target) || !PlayerFilter.AreEnemies(player, target))
                 {
-                    onTarget = true;
-                    break;
+                    EndEpisode(playerId, completedNormally: false);
+                    return;
                 }
-            }
 
-            int deltaTicks = sample.ServerTick - data.Track.LastServerTick;
-            if (deltaTicks < 1 || deltaTicks > 3)
-            {
-                EndEpisode(playerId, completedNormally: false);
-                return;
-            }
+                var targetPawn = target!.PlayerPawn;
+                Vector targetOrigin = targetPawn?.AbsOrigin ?? default;
+                float dist = sample.EyePosition.Distance(targetOrigin);
 
-            data.Track.Samples += deltaTicks;
-            if (onTarget)
-                data.Track.OnTargetSamples += deltaTicks;
-
-            data.Track.TotalDistance += dist * deltaTicks;
-            data.Track.LastServerTick = sample.ServerTick;
-
-            QAngle currentBearing = AimMath.Bearing(sample.EyePosition, targetOrigin);
-            float disp = AimMath.AngularDistance(data.Track.StartBearing, currentBearing);
-            if (float.IsFinite(disp) && disp > data.Track.MaxDisplacement)
-                data.Track.MaxDisplacement = disp;
-
-            // If crosshair completely left target for more than 4 consecutive ticks, finalize episode
-            if (!onTarget && (data.Track.Samples - data.Track.OnTargetSamples >= 6))
-            {
-                EndEpisode(playerId, completedNormally: true);
-            }
-
-            return;
-        }
-
-        // Search candidate to start tracking
-        for (int i = 0; i < MaxPlayers; i++)
-        {
-            if (i == playerId)
-                continue;
-
-            var target = _getPlayer(i);
-            if (!PlayerFilter.IsValidTarget(target) || !PlayerFilter.AreEnemies(player, target))
-                continue;
-
-            var targetPawn = target!.PlayerPawn;
-            Vector targetOrigin = targetPawn?.AbsOrigin ?? default;
-            float dist = sample.EyePosition.Distance(targetOrigin);
-            if (!AimMath.IsFinite(targetOrigin) || dist < 1.0f)
-                continue;
-
-            float maxErr = MathF.Atan2(PlayerHalfWidth, dist) * (180.0f / MathF.PI);
-            bool candidateFound = false;
-
-            for (int bp = 0; bp < AimMath.BodyPointCount; bp++)
-            {
-                Vector bpPos = new(targetOrigin.X, targetOrigin.Y, targetOrigin.Z + AimMath.BodyHeight(bp));
-                float err = AimMath.AimError(sample.EyePosition, sample.Angles, bpPos);
-                if (err <= maxErr)
+                if (!AimMath.IsFinite(targetOrigin) || dist < 1.0f)
                 {
-                    candidateFound = true;
-                    break;
+                    EndEpisode(playerId, completedNormally: false);
+                    return;
                 }
-            }
 
-            if (candidateFound)
-            {
-                data.Track.TargetIndex = i;
-                data.Track.StartServerTick = sample.ServerTick;
+                // Check if still on target (feet, chest, or head)
+                bool onTarget = false;
+                for (int bp = 0; bp < AimMath.BodyPointCount; bp++)
+                {
+                    Vector bpPos = new(targetOrigin.X, targetOrigin.Y, targetOrigin.Z + AimMath.BodyHeight(bp));
+                    float err = AimMath.AimError(sample.EyePosition, sample.Angles, bpPos);
+                    float maxErr = MathF.Atan2(PlayerHalfWidth, dist) * (180.0f / MathF.PI);
+                    if (err <= maxErr)
+                    {
+                        onTarget = true;
+                        break;
+                    }
+                }
+
+                int deltaTicks = sample.ServerTick - data.Track.LastServerTick;
+                if (deltaTicks < 1 || deltaTicks > 3)
+                {
+                    EndEpisode(playerId, completedNormally: false);
+                    return;
+                }
+
+                data.Track.Samples += deltaTicks;
+                if (onTarget)
+                    data.Track.OnTargetSamples += deltaTicks;
+
+                data.Track.TotalDistance += dist * deltaTicks;
                 data.Track.LastServerTick = sample.ServerTick;
-                data.Track.Samples = 1;
-                data.Track.OnTargetSamples = 1;
-                data.Track.StartBearing = AimMath.Bearing(sample.EyePosition, targetOrigin);
-                data.Track.MaxDisplacement = 0.0f;
-                data.Track.TotalDistance = dist;
-                break;
+
+                QAngle currentBearing = AimMath.Bearing(sample.EyePosition, targetOrigin);
+                float disp = AimMath.AngularDistance(data.Track.StartBearing, currentBearing);
+                if (float.IsFinite(disp) && disp > data.Track.MaxDisplacement)
+                    data.Track.MaxDisplacement = disp;
+
+                // If crosshair completely left target for more than 4 consecutive ticks, finalize episode
+                if (!onTarget && (data.Track.Samples - data.Track.OnTargetSamples >= 6))
+                {
+                    EndEpisode(playerId, completedNormally: true);
+                }
+
+                return;
             }
+
+            // Search candidate to start tracking
+            for (int i = 0; i < MaxPlayers; i++)
+            {
+                if (i == playerId)
+                    continue;
+
+                var target = _getPlayer(i);
+                if (!PlayerFilter.IsValidTarget(target) || !PlayerFilter.AreEnemies(player, target))
+                    continue;
+
+                var targetPawn = target!.PlayerPawn;
+                Vector targetOrigin = targetPawn?.AbsOrigin ?? default;
+                float dist = sample.EyePosition.Distance(targetOrigin);
+                if (!AimMath.IsFinite(targetOrigin) || dist < 1.0f)
+                    continue;
+
+                float maxErr = MathF.Atan2(PlayerHalfWidth, dist) * (180.0f / MathF.PI);
+                bool candidateFound = false;
+
+                for (int bp = 0; bp < AimMath.BodyPointCount; bp++)
+                {
+                    Vector bpPos = new(targetOrigin.X, targetOrigin.Y, targetOrigin.Z + AimMath.BodyHeight(bp));
+                    float err = AimMath.AimError(sample.EyePosition, sample.Angles, bpPos);
+                    if (err <= maxErr)
+                    {
+                        candidateFound = true;
+                        break;
+                    }
+                }
+
+                if (candidateFound)
+                {
+                    data.Track.TargetIndex = i;
+                    data.Track.StartServerTick = sample.ServerTick;
+                    data.Track.LastServerTick = sample.ServerTick;
+                    data.Track.Samples = 1;
+                    data.Track.OnTargetSamples = 1;
+                    data.Track.StartBearing = AimMath.Bearing(sample.EyePosition, targetOrigin);
+                    data.Track.MaxDisplacement = 0.0f;
+                    data.Track.TotalDistance = dist;
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _debug($"[AimlockTelemetry] Evaluate error: {ex.Message}");
         }
     }
 

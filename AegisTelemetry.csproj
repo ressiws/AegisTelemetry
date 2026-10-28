@@ -10,7 +10,7 @@
     <AssemblyName>AegisTelemetry</AssemblyName>
     <OutputPath>$(MSBuildThisFileDirectory)build/</OutputPath>
     <PublishDir>$(OutputPath)publish/AegisTelemetry</PublishDir>
-    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;dashboard\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
